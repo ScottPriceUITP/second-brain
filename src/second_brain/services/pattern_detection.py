@@ -7,7 +7,7 @@ genuinely interesting cross-entry insights.
 import logging
 from datetime import timedelta
 
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from second_brain.models.entry import Entry
 from second_brain.models.nudge import NudgeHistory

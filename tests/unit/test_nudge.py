@@ -71,55 +71,47 @@ def _add_entry(sf, **kwargs) -> int:
         return entry.id
 
 
-def _patch_now(naive_utc):
-    """Create a patch for datetime.now in nudge_manager that returns naive UTC.
-
-    This works around SQLite stripping timezone from stored datetimes:
-    check_escalations() does `now - nudge.sent_at` which needs both
-    to have matching tz-awareness.
-    """
-    def _now(tz=None):
-        return naive_utc
-    return _now
-
-
 class TestCreateNudge:
     def test_creates_nudge_history_record(self, manager, sf):
-        nudge, formatted, keyboard = manager.create_nudge(
+        nudge_id, formatted, keyboard = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Time to follow up",
         )
 
-        assert nudge.id is not None
-        assert nudge.nudge_type == "open_loop"
-        assert nudge.message_text == "Time to follow up"
-        assert nudge.escalation_level == 1
-        assert nudge.sent_at is not None
+        assert nudge_id is not None
+        assert isinstance(nudge_id, int)
 
         # Verify persisted in DB
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge is not None
+            assert db_nudge.nudge_type == "open_loop"
             assert db_nudge.message_text == "Time to follow up"
+            assert db_nudge.escalation_level == 1
+            assert db_nudge.sent_at is not None
 
     def test_creates_nudge_with_entry_id(self, manager, sf):
         entry_id = _add_entry(sf)
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=entry_id,
             nudge_type="open_loop",
             message="Follow up needed",
         )
-        assert nudge.entry_id == entry_id
+        with sf() as session:
+            db_nudge = session.get(NudgeHistory, nudge_id)
+            assert db_nudge.entry_id == entry_id
 
     def test_creates_nudge_with_escalation_level(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="pattern_insight",
             message="Pattern detected",
             escalation_level=2,
         )
-        assert nudge.escalation_level == 2
+        with sf() as session:
+            db_nudge = session.get(NudgeHistory, nudge_id)
+            assert db_nudge.escalation_level == 2
 
     def test_returns_formatted_message(self, manager, sf):
         _, formatted, _ = manager.create_nudge(
@@ -150,7 +142,7 @@ class TestCreateNudge:
         assert "[ACTION NEEDED]" in formatted
 
     def test_returns_inline_keyboard(self, manager, sf):
-        nudge, _, keyboard = manager.create_nudge(
+        nudge_id, _, keyboard = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Test nudge",
@@ -159,24 +151,24 @@ class TestCreateNudge:
         assert len(keyboard[0]) == 3
         texts = [btn["text"] for btn in keyboard[0]]
         assert texts == ["Done", "Snooze", "Drop"]
-        assert f"nudge:done:{nudge.id}" == keyboard[0][0]["callback_data"]
-        assert f"nudge:snooze:{nudge.id}" == keyboard[0][1]["callback_data"]
-        assert f"nudge:drop:{nudge.id}" == keyboard[0][2]["callback_data"]
+        assert f"nudge:done:{nudge_id}" == keyboard[0][0]["callback_data"]
+        assert f"nudge:snooze:{nudge_id}" == keyboard[0][1]["callback_data"]
+        assert f"nudge:drop:{nudge_id}" == keyboard[0][2]["callback_data"]
 
 
 class TestHandleNudgeAction:
     def test_done_action(self, manager, sf):
         entry_id = _add_entry(sf)
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=entry_id,
             nudge_type="open_loop",
             message="Follow up",
         )
-        result = manager.handle_nudge_action(nudge.id, "done")
+        result = manager.handle_nudge_action(nudge_id, "done")
         assert result == "Marked as done."
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.user_action == "done"
             assert db_nudge.user_action_at is not None
             db_entry = session.get(Entry, entry_id)
@@ -184,45 +176,45 @@ class TestHandleNudgeAction:
             assert db_entry.is_open_loop is False
 
     def test_snoozed_action_with_date(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Snooze test",
         )
         snooze_date = date(2026, 4, 1)
-        result = manager.handle_nudge_action(nudge.id, "snoozed", snooze_until=snooze_date)
+        result = manager.handle_nudge_action(nudge_id, "snoozed", snooze_until=snooze_date)
         assert "Snoozed until 2026-04-01" in result
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.user_action == "snoozed"
             assert db_nudge.snooze_until == snooze_date
 
     def test_snoozed_action_default_date(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Snooze default",
         )
-        result = manager.handle_nudge_action(nudge.id, "snoozed")
+        result = manager.handle_nudge_action(nudge_id, "snoozed")
         assert "Snoozed until" in result
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.snooze_until is not None
 
     def test_dropped_action(self, manager, sf):
         entry_id = _add_entry(sf)
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=entry_id,
             nudge_type="open_loop",
             message="Drop test",
         )
-        result = manager.handle_nudge_action(nudge.id, "dropped")
+        result = manager.handle_nudge_action(nudge_id, "dropped")
         assert result == "Dropped. Won't remind you again."
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.user_action == "dropped"
             db_entry = session.get(Entry, entry_id)
             assert db_entry.status == "archived"
@@ -233,20 +225,19 @@ class TestHandleNudgeAction:
         assert result == "Nudge not found."
 
     def test_done_no_entry(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="pattern_insight",
             message="Pattern nudge",
         )
-        result = manager.handle_nudge_action(nudge.id, "done")
+        result = manager.handle_nudge_action(nudge_id, "done")
         assert result == "Marked as done."
 
 
 class TestEscalationLifecycle:
     """Test escalation from level 1 -> 2 -> 3 based on time thresholds.
 
-    All escalation tests patch datetime.now in nudge_manager to return
-    naive UTC, matching what SQLite round-trips for stored datetimes.
+    All escalation tests patch utc_now in nudge_manager to control time.
     """
 
     def test_level_1_to_2_after_threshold(self, manager, sf):
@@ -265,14 +256,14 @@ class TestEscalationLifecycle:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 1
-        new_nudge, formatted, keyboard = escalated[0]
-        assert new_nudge.escalation_level == 2
+        new_nudge_id, formatted, keyboard = escalated[0]
+        with sf() as session:
+            new_nudge = session.get(NudgeHistory, new_nudge_id)
+            assert new_nudge.escalation_level == 2
 
     def test_level_2_to_3_after_threshold(self, manager, sf):
         """A level 2 nudge escalates to level 3 after nudge_escalation_days."""
@@ -290,14 +281,14 @@ class TestEscalationLifecycle:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 1
-        new_nudge, _, _ = escalated[0]
-        assert new_nudge.escalation_level == 3
+        new_nudge_id, _, _ = escalated[0]
+        with sf() as session:
+            new_nudge = session.get(NudgeHistory, new_nudge_id)
+            assert new_nudge.escalation_level == 3
 
     def test_level_3_does_not_escalate_further(self, manager, sf):
         """Level 3 is max; no further escalation."""
@@ -314,9 +305,7 @@ class TestEscalationLifecycle:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = _utcnow()
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=_utcnow()):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -337,9 +326,7 @@ class TestEscalationLifecycle:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -361,9 +348,7 @@ class TestEscalationLifecycle:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = _utcnow()
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=_utcnow()):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -387,9 +372,7 @@ class TestCheckEscalations:
             session.commit()
             old_id = old_nudge.id
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             manager.check_escalations()
 
         with sf() as session:
@@ -413,9 +396,7 @@ class TestCheckEscalations:
             session.add(snoozed)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -443,9 +424,7 @@ class TestCheckEscalations:
             session.add_all([old_nudge, existing_escalation])
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -466,14 +445,14 @@ class TestCheckEscalations:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 1
-        new_nudge, _, _ = escalated[0]
-        assert "Call the plumber" in new_nudge.message_text
+        new_nudge_id, _, _ = escalated[0]
+        with sf() as session:
+            new_nudge = session.get(NudgeHistory, new_nudge_id)
+            assert "Call the plumber" in new_nudge.message_text
 
     def test_builds_escalation_message_level3(self, manager, sf):
         """Level 3 escalation message asks about resolution."""
@@ -491,28 +470,28 @@ class TestCheckEscalations:
             session.add(old_nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 1
-        new_nudge, _, _ = escalated[0]
-        assert "resolved or dropped" in new_nudge.message_text
+        new_nudge_id, _, _ = escalated[0]
+        with sf() as session:
+            new_nudge = session.get(NudgeHistory, new_nudge_id)
+            assert "resolved or dropped" in new_nudge.message_text
 
 
 class TestSnooze:
     def test_snooze_sets_snooze_until(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Test",
         )
         snooze_date = date(2026, 5, 1)
-        manager.handle_nudge_action(nudge.id, "snoozed", snooze_until=snooze_date)
+        manager.handle_nudge_action(nudge_id, "snoozed", snooze_until=snooze_date)
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.snooze_until == snooze_date
             assert db_nudge.user_action == "snoozed"
 
@@ -533,9 +512,7 @@ class TestSnooze:
             session.add(nudge)
             session.commit()
 
-        with patch("second_brain.services.nudge_manager.datetime") as mock_dt:
-            mock_dt.now.return_value = now
-            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        with patch("second_brain.services.nudge_manager.utc_now", return_value=now):
             escalated = manager.check_escalations()
 
         assert len(escalated) == 0
@@ -558,7 +535,7 @@ class TestGetSnoozedDue:
 
         result = manager.get_snoozed_due()
         assert len(result) == 1
-        assert result[0].message_text == "Expired snooze"
+        assert result[0]["message_text"] == "Expired snooze"
 
     def test_ignores_future_snoozes(self, manager, sf):
         with sf() as session:
@@ -613,15 +590,15 @@ class TestGetSnoozedDue:
 
 class TestSetTelegramMessageId:
     def test_sets_telegram_message_id(self, manager, sf):
-        nudge, _, _ = manager.create_nudge(
+        nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Test",
         )
-        manager.set_telegram_message_id(nudge.id, 99999)
+        manager.set_telegram_message_id(nudge_id, 99999)
 
         with sf() as session:
-            db_nudge = session.get(NudgeHistory, nudge.id)
+            db_nudge = session.get(NudgeHistory, nudge_id)
             assert db_nudge.telegram_message_id == 99999
 
     def test_nonexistent_nudge_no_error(self, manager, sf):

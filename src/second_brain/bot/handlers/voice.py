@@ -1,12 +1,22 @@
 """Voice message handler — transcribes audio via Whisper and feeds into enrichment."""
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters
 
-from second_brain.bot.formatting import format_capture_confirmation, format_error
+from second_brain.bot.formatting import (
+    format_capture_confirmation,
+    format_error,
+    format_query_response,
+)
+from second_brain.bot.pipeline import (
+    get_recent_calendar_events,
+    resolve_entities,
+    score_connections,
+    store_tags,
+)
 from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
@@ -138,7 +148,7 @@ async def _enrich_transcription(
         return
 
     try:
-        calendar_events = _get_recent_calendar_events(session_factory)
+        calendar_events = get_recent_calendar_events(session_factory)
 
         enrichment_result = enrichment_service.enrich_text(
             raw_text=transcribed_text,
@@ -163,12 +173,25 @@ async def _enrich_transcription(
             await message.reply_text("Query system not available.")
             return
         try:
-            from second_brain.bot.formatting import format_query_response
+            session_manager = context.bot_data.get("query_session_manager")
+            session_ctx = None
+            if session_manager:
+                session_ctx = session_manager.session
 
-            result = query_engine.handle_query(transcribed_text)
-            response_text = format_query_response(
-                result.answer, result.sources if hasattr(result, "sources") else []
+            result = query_engine.handle_query(
+                transcribed_text, session_context=session_ctx
             )
+
+            # Update session
+            if session_manager:
+                source_ids = [s.entry_id for s in result.sources]
+                session_manager.update(transcribed_text, result.answer, source_ids)
+
+            sources = [
+                {"date": s.date, "entry_id": s.entry_id}
+                for s in result.sources
+            ]
+            response_text = format_query_response(result.answer, sources)
             await message.reply_text(response_text)
         except Exception:
             logger.exception("Query failed for voice entry %d", entry_id)
@@ -198,36 +221,39 @@ async def _enrich_transcription(
                         enrichment_result.follow_up_date
                     )
                 except ValueError:
-                    pass
+                    logger.warning(
+                        "Invalid follow_up_date from enrichment: %s",
+                        enrichment_result.follow_up_date,
+                    )
 
             if enrichment_result.calendar_event_id:
                 entry.calendar_event_id = enrichment_result.calendar_event_id
 
             # Store tags
-            _store_tags(session, entry, enrichment_result.tags)
+            store_tags(session, entry, enrichment_result.tags)
 
-            # Resolve entities (creates service with current session)
-            _resolve_entities(context, session, entry, enrichment_result.entities)
+            # Resolve entities
+            resolve_entities(session, entry, enrichment_result.entities)
 
-            # Score connections (creates service with current session)
-            strong_connections = _score_connections(context, session, entry)
+            # Score connections
+            anthropic_client = context.bot_data.get("anthropic_client")
+            strong_connections = score_connections(anthropic_client, session, entry)
 
-            session.commit()
-
-        has_connections = bool(strong_connections)
-        confirmation = format_capture_confirmation(
-            enrichment_result.entry_type, has_connections=has_connections
-        )
-
-        if strong_connections:
-            summaries = []
+            # Extract connection previews while session is still open
+            connection_previews = []
             for conn in strong_connections[:3]:
                 if conn.entry and conn.entry.clean_text:
                     preview = conn.entry.clean_text[:60]
                 else:
                     preview = f"entry #{conn.entry_id}"
-                summaries.append(f"  - {preview}")
-            confirmation += "\n\nRelated:\n" + "\n".join(summaries)
+                connection_previews.append(f"  - {preview}")
+
+            session.commit()
+
+        confirmation = format_capture_confirmation(enrichment_result.entry_type)
+
+        if connection_previews:
+            confirmation += "\n\nRelated:\n" + "\n".join(connection_previews)
 
         await message.reply_text(confirmation)
 
@@ -236,126 +262,6 @@ async def _enrich_transcription(
         await message.reply_text(
             format_error("Could not process transcription. It has been saved for retry.")
         )
-
-
-def _get_recent_calendar_events(session_factory) -> list[dict] | None:
-    """Fetch recent/upcoming calendar events for enrichment context."""
-    try:
-        from second_brain.models.calendar_event import CalendarEvent
-
-        now = utc_now()
-        window_start = now - timedelta(hours=2)
-        window_end = now + timedelta(hours=4)
-
-        with session_factory() as session:
-            events = (
-                session.query(CalendarEvent)
-                .filter(
-                    CalendarEvent.start_time >= window_start,
-                    CalendarEvent.start_time <= window_end,
-                )
-                .order_by(CalendarEvent.start_time)
-                .limit(5)
-                .all()
-            )
-
-            if not events:
-                return None
-
-            return [
-                {
-                    "id": e.id,
-                    "title": e.title,
-                    "start_time": e.start_time.isoformat(),
-                    "attendees": e.attendees,
-                    "description": e.description,
-                }
-                for e in events
-            ]
-    except Exception:
-        logger.debug("Could not fetch calendar events for voice enrichment context")
-        return None
-
-
-def _store_tags(session, entry, tag_names: list[str]) -> None:
-    """Create or get-existing tags and link them to the entry."""
-    if not tag_names:
-        return
-
-    from second_brain.models.tag import Tag
-
-    for tag_name in tag_names:
-        tag_name = tag_name.strip().lower()
-        if not tag_name:
-            continue
-
-        tag = session.query(Tag).filter(Tag.name == tag_name).first()
-        if not tag:
-            tag = Tag(name=tag_name)
-            session.add(tag)
-            session.flush()
-
-        if tag not in entry.tags:
-            entry.tags.append(tag)
-
-
-def _resolve_entities(context, session, entry, extracted_entities):
-    """Resolve extracted entities via EntityResolutionService and link to entry.
-
-    Creates a per-request EntityResolutionService with the current session
-    so that entity creation and linking happen within the same transaction.
-    """
-    if not extracted_entities:
-        return None
-
-    try:
-        from second_brain.services.entity_resolution import EntityResolutionService
-
-        service = EntityResolutionService(session=session)
-
-        entity_dicts = [
-            {"name": e.name, "type": e.type} for e in extracted_entities
-        ]
-        resolved = service.resolve_entities(
-            extracted_entities=entity_dicts,
-        )
-
-        from second_brain.models.entity import Entity
-
-        for linked in resolved.auto_linked:
-            entity = session.get(Entity, linked.entity_id)
-            if entity and entity not in entry.entities:
-                entry.entities.append(entity)
-
-        for new_ent in resolved.new_created:
-            entity = session.get(Entity, new_ent.entity_id)
-            if entity and entity not in entry.entities:
-                entry.entities.append(entity)
-
-        return resolved
-    except Exception:
-        logger.exception("Entity resolution failed for voice entry %d", entry.id)
-        return None
-
-
-def _score_connections(context, session, entry):
-    """Score connections between this entry and existing entries.
-
-    Creates a per-request ConnectionScoringService with the current session
-    so that relation creation happens within the same transaction.
-    """
-    anthropic_client = context.bot_data.get("anthropic_client")
-    if not anthropic_client:
-        return []
-
-    try:
-        from second_brain.services.connection_scoring import ConnectionScoringService
-
-        service = ConnectionScoringService(client=anthropic_client, session=session)
-        return service.score_connections(entry=entry)
-    except Exception:
-        logger.exception("Connection scoring failed for voice entry %d", entry.id)
-        return []
 
 
 def register(application) -> None:

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from second_brain.config import get_config_int
-from second_brain.models.entity import Entity, entry_entities
+from second_brain.models.entity import entry_entities
 from second_brain.models.entry import Entry
 from second_brain.prompts.query_simple import (
     QUERY_SIMPLE_SYSTEM,

@@ -3,8 +3,6 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from second_brain.utils.time import utc_now
@@ -36,6 +34,7 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "meeting_check_interval_minutes": "5",
     "enrichment_retry_count": "3",
     "enrichment_retry_interval_minutes": "10",
+    "escalation_check_interval_minutes": "15",
     "transcription_retry_count": "3",
     "transcription_retry_interval_minutes": "10",
     "notify_on_token_refresh": "true",

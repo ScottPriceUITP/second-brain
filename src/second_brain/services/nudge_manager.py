@@ -1,7 +1,7 @@
 """Nudge manager — creates nudges, handles user actions, manages escalations."""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -37,7 +37,7 @@ class NudgeManager:
         nudge_type: str,
         message: str,
         escalation_level: int = 1,
-    ) -> tuple[NudgeHistory, str, list[list[dict]]]:
+    ) -> tuple[int, str, list[list[dict]]]:
         """Create a nudge record and prepare the Telegram message with inline buttons.
 
         Args:
@@ -47,7 +47,7 @@ class NudgeManager:
             escalation_level: 1=neutral, 2=urgent, 3=direct.
 
         Returns:
-            Tuple of (nudge record, formatted message text, inline keyboard rows).
+            Tuple of (nudge_id, formatted message text, inline keyboard rows).
             The caller (bot handler / scheduler) is responsible for actually
             sending the Telegram message and updating telegram_message_id.
         """
@@ -63,26 +63,27 @@ class NudgeManager:
             session.commit()
 
             nudge_id = nudge.id
-            formatted = format_nudge(message, escalation_level)
 
-            # Inline keyboard: Done / Snooze / Drop
-            keyboard = [
-                [
-                    {"text": "Done", "callback_data": f"nudge:done:{nudge_id}"},
-                    {"text": "Snooze", "callback_data": f"nudge:snooze:{nudge_id}"},
-                    {"text": "Drop", "callback_data": f"nudge:drop:{nudge_id}"},
-                ]
+        formatted = format_nudge(message, escalation_level)
+
+        # Inline keyboard: Done / Snooze / Drop
+        keyboard = [
+            [
+                {"text": "Done", "callback_data": f"nudge:done:{nudge_id}"},
+                {"text": "Snooze", "callback_data": f"nudge:snooze:{nudge_id}"},
+                {"text": "Drop", "callback_data": f"nudge:drop:{nudge_id}"},
             ]
+        ]
 
-            logger.info(
-                "Nudge created: id=%d type=%s entry_id=%s level=%d",
-                nudge_id,
-                nudge_type,
-                entry_id,
-                escalation_level,
-            )
+        logger.info(
+            "Nudge created: id=%d type=%s entry_id=%s level=%d",
+            nudge_id,
+            nudge_type,
+            entry_id,
+            escalation_level,
+        )
 
-            return nudge, formatted, keyboard
+        return nudge_id, formatted, keyboard
 
     def set_telegram_message_id(self, nudge_id: int, telegram_message_id: int) -> None:
         """Update the nudge with the Telegram message ID after sending."""
@@ -194,11 +195,11 @@ class NudgeManager:
 
         return action, snooze_date
 
-    def check_escalations(self) -> list[tuple[NudgeHistory, str, list[list[dict]]]]:
+    def check_escalations(self) -> list[tuple[int, str, list[list[dict]]]]:
         """Find unactioned nudges past escalation thresholds and create escalated nudges.
 
         Returns:
-            List of (new_nudge, formatted_message, keyboard) tuples for sending.
+            List of (nudge_id, formatted_message, keyboard) tuples for sending.
         """
         now = utc_now()
         pending: list[dict] = []
@@ -306,15 +307,16 @@ class NudgeManager:
             "Should this be resolved or dropped?"
         )
 
-    def get_snoozed_due(self) -> list[NudgeHistory]:
+    def get_snoozed_due(self) -> list[dict]:
         """Find snoozed nudges whose snooze period has expired.
 
         Returns:
-            List of nudge records ready to be re-nudged at level 1.
+            List of dicts with entry_id, nudge_type, message_text keys,
+            ready to be re-nudged at level 1.
         """
         today = date.today()
         with self.session_factory() as session:
-            return (
+            nudges = (
                 session.query(NudgeHistory)
                 .filter(
                     NudgeHistory.user_action == "snoozed",
@@ -322,3 +324,11 @@ class NudgeManager:
                 )
                 .all()
             )
+            return [
+                {
+                    "entry_id": n.entry_id,
+                    "nudge_type": n.nudge_type,
+                    "message_text": n.message_text,
+                }
+                for n in nudges
+            ]

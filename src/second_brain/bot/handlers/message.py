@@ -1,7 +1,7 @@
 """Text message handler — receives text from Telegram, enriches, and stores entries."""
 
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, MessageHandler, filters
@@ -10,6 +10,12 @@ from second_brain.bot.formatting import (
     format_capture_confirmation,
     format_error,
     format_query_response,
+)
+from second_brain.bot.pipeline import (
+    get_recent_calendar_events,
+    resolve_entities,
+    score_connections,
+    store_tags,
 )
 from second_brain.utils.time import utc_now
 
@@ -63,7 +69,7 @@ async def handle_text_message(
     # Step 2: Enrich
     try:
         # Fetch recent calendar events for context
-        calendar_events = _get_recent_calendar_events(session_factory)
+        calendar_events = get_recent_calendar_events(session_factory)
 
         enrichment_result = enrichment_service.enrich_text(
             raw_text=raw_text,
@@ -112,33 +118,33 @@ async def handle_text_message(
                 entry.calendar_event_id = enrichment_result.calendar_event_id
 
             # Store tags
-            _store_tags(session, entry, enrichment_result.tags)
+            store_tags(session, entry, enrichment_result.tags)
 
             # Resolve entities (creates service with current session)
-            resolved = _resolve_entities(
-                context, session, entry, enrichment_result.entities
+            resolved = resolve_entities(
+                session, entry, enrichment_result.entities
             )
 
             # Score connections (creates service with current session)
-            strong_connections = _score_connections(context, session, entry)
+            anthropic_client = context.bot_data.get("anthropic_client")
+            strong_connections = score_connections(anthropic_client, session, entry)
 
-            session.commit()
-
-        # Step 5: Send confirmation
-        has_connections = bool(strong_connections)
-        confirmation = format_capture_confirmation(
-            enrichment_result.entry_type, has_connections=has_connections
-        )
-
-        if strong_connections:
-            connection_summaries = []
+            # Extract connection previews while session is still open
+            connection_previews = []
             for conn in strong_connections[:3]:
                 if conn.entry and conn.entry.clean_text:
                     preview = conn.entry.clean_text[:60]
                 else:
                     preview = f"entry #{conn.entry_id}"
-                connection_summaries.append(f"  - {preview}")
-            confirmation += "\n\nRelated:\n" + "\n".join(connection_summaries)
+                connection_previews.append(f"  - {preview}")
+
+            session.commit()
+
+        # Step 5: Send confirmation
+        confirmation = format_capture_confirmation(enrichment_result.entry_type)
+
+        if connection_previews:
+            confirmation += "\n\nRelated:\n" + "\n".join(connection_previews)
 
         # Send entity disambiguation prompts if any
         if resolved and resolved.ambiguous:
@@ -192,136 +198,28 @@ async def _handle_query(
             source_ids = [s.entry_id for s in result.sources]
             session_manager.update(raw_text, result.answer, source_ids)
 
-        response_text = format_query_response(
-            result.answer, result.sources if hasattr(result, "sources") else []
-        )
+        # Mark entry as a processed query
+        from second_brain.models.entry import Entry
+
+        with session_factory() as session:
+            entry = session.get(Entry, entry_id)
+            if entry:
+                entry.entry_type = "personal"
+                entry.status = "open"
+                entry.clean_text = raw_text
+                session.commit()
+
+        sources = [
+            {"date": s.date, "entry_id": s.entry_id}
+            for s in result.sources
+        ]
+        response_text = format_query_response(result.answer, sources)
         await update.message.reply_text(response_text)
     except Exception:
         logger.exception("Query engine failed for entry %d", entry_id)
         await update.message.reply_text(
             format_error("Could not process your query. Please try again.")
         )
-
-
-def _get_recent_calendar_events(session_factory) -> list[dict] | None:
-    """Fetch recent/upcoming calendar events for enrichment context."""
-    try:
-        from second_brain.models.calendar_event import CalendarEvent
-
-        now = utc_now()
-        window_start = now - timedelta(hours=2)
-        window_end = now + timedelta(hours=4)
-
-        with session_factory() as session:
-            events = (
-                session.query(CalendarEvent)
-                .filter(
-                    CalendarEvent.start_time >= window_start,
-                    CalendarEvent.start_time <= window_end,
-                )
-                .order_by(CalendarEvent.start_time)
-                .limit(5)
-                .all()
-            )
-
-            if not events:
-                return None
-
-            return [
-                {
-                    "id": e.id,
-                    "title": e.title,
-                    "start_time": e.start_time.isoformat(),
-                    "attendees": e.attendees,
-                    "description": e.description,
-                }
-                for e in events
-            ]
-    except Exception:
-        logger.debug("Could not fetch calendar events for enrichment context")
-        return None
-
-
-def _store_tags(session, entry, tag_names: list[str]) -> None:
-    """Create or get-existing tags and link them to the entry."""
-    if not tag_names:
-        return
-
-    from second_brain.models.tag import Tag
-
-    for tag_name in tag_names:
-        tag_name = tag_name.strip().lower()
-        if not tag_name:
-            continue
-
-        tag = session.query(Tag).filter(Tag.name == tag_name).first()
-        if not tag:
-            tag = Tag(name=tag_name)
-            session.add(tag)
-            session.flush()
-
-        if tag not in entry.tags:
-            entry.tags.append(tag)
-
-
-def _resolve_entities(context, session, entry, extracted_entities):
-    """Resolve extracted entities via EntityResolutionService and link to entry.
-
-    Creates a per-request EntityResolutionService with the current session
-    so that entity creation and linking happen within the same transaction.
-    """
-    if not extracted_entities:
-        return None
-
-    try:
-        from second_brain.services.entity_resolution import EntityResolutionService
-
-        service = EntityResolutionService(session=session)
-
-        entity_dicts = [
-            {"name": e.name, "type": e.type} for e in extracted_entities
-        ]
-        resolved = service.resolve_entities(
-            extracted_entities=entity_dicts,
-        )
-
-        # Link auto-linked and new entities to the entry
-        from second_brain.models.entity import Entity
-
-        for linked in resolved.auto_linked:
-            entity = session.get(Entity, linked.entity_id)
-            if entity and entity not in entry.entities:
-                entry.entities.append(entity)
-
-        for new_ent in resolved.new_created:
-            entity = session.get(Entity, new_ent.entity_id)
-            if entity and entity not in entry.entities:
-                entry.entities.append(entity)
-
-        return resolved
-    except Exception:
-        logger.exception("Entity resolution failed for entry %d", entry.id)
-        return None
-
-
-def _score_connections(context, session, entry):
-    """Score connections between this entry and existing entries.
-
-    Creates a per-request ConnectionScoringService with the current session
-    so that relation creation happens within the same transaction.
-    """
-    anthropic_client = context.bot_data.get("anthropic_client")
-    if not anthropic_client:
-        return []
-
-    try:
-        from second_brain.services.connection_scoring import ConnectionScoringService
-
-        service = ConnectionScoringService(client=anthropic_client, session=session)
-        return service.score_connections(entry=entry)
-    except Exception:
-        logger.exception("Connection scoring failed for entry %d", entry.id)
-        return []
 
 
 async def _send_disambiguation_prompts(message, entry_id, ambiguous_entities):

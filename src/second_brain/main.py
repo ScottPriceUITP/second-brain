@@ -248,6 +248,11 @@ def main() -> None:
         services=services,
     )
 
+    # Start the scheduler (registers APScheduler jobs)
+    scheduler = services.get("scheduler")
+    if scheduler:
+        scheduler.setup_scheduler(application.bot_data)
+
     logger.info("Starting Telegram polling...")
     application.run_polling()
 

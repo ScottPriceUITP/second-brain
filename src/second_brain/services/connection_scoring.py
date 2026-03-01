@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from second_brain.config import get_config_float, get_config_int
+from second_brain.config import get_config_int
 from second_brain.models.entry import Entry
 from second_brain.models.relation import EntryRelation
 from second_brain.prompts.connection_scoring import (

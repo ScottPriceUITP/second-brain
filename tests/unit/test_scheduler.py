@@ -45,6 +45,7 @@ def services(sf):
 
 
 class TestJobRegistration:
+    @pytest.mark.asyncio
     async def test_all_jobs_registered(self, services):
         """setup_scheduler registers main_scheduler, calendar_sync, meeting_check, retry_jobs."""
         svc = SchedulerService(services)
@@ -60,6 +61,7 @@ class TestJobRegistration:
 
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_scheduler_starts(self, services):
         """setup_scheduler starts the scheduler."""
         svc = SchedulerService(services)
@@ -67,6 +69,7 @@ class TestJobRegistration:
         assert svc.scheduler.running is True
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_shutdown_stops_scheduler(self, services):
         """shutdown() calls scheduler.shutdown() and is idempotent."""
         svc = SchedulerService(services)
@@ -77,6 +80,7 @@ class TestJobRegistration:
         # Calling shutdown again should also not raise (idempotent guard)
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_replace_existing_jobs(self, services):
         """Calling setup_scheduler with replace_existing=True doesn't duplicate jobs."""
         svc = SchedulerService(services)
@@ -95,6 +99,7 @@ class TestJobRegistration:
 
 
 class TestActiveHoursFiltering:
+    @pytest.mark.asyncio
     async def test_main_scheduler_cron_hour_range(self, services):
         """Main scheduler job uses cron with correct hour range from config."""
         svc = SchedulerService(services)
@@ -107,6 +112,7 @@ class TestActiveHoursFiltering:
 
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_custom_active_hours(self, sf):
         """Scheduler reads custom start/end hours from config."""
         with sf() as session:
@@ -128,6 +134,7 @@ class TestActiveHoursFiltering:
 
 
 class TestConfigurableIntervals:
+    @pytest.mark.asyncio
     async def test_custom_calendar_interval(self, sf):
         """Calendar sync uses interval from config."""
         with sf() as session:
@@ -147,6 +154,7 @@ class TestConfigurableIntervals:
 
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_custom_meeting_interval(self, sf):
         """Meeting check uses interval from config."""
         with sf() as session:
@@ -165,6 +173,7 @@ class TestConfigurableIntervals:
 
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_custom_retry_interval(self, sf):
         """Retry job uses interval from config."""
         with sf() as session:
@@ -183,6 +192,7 @@ class TestConfigurableIntervals:
 
         svc.shutdown()
 
+    @pytest.mark.asyncio
     async def test_default_intervals_from_config(self, services):
         """Uses default intervals from the config table."""
         svc = SchedulerService(services)

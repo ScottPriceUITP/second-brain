@@ -6,7 +6,7 @@ upcoming meetings, and retry failed operations.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import sessionmaker
@@ -14,7 +14,6 @@ from sqlalchemy.orm import sessionmaker
 from second_brain.config import get_config_int
 from second_brain.models.calendar_event import CalendarEvent
 from second_brain.models.entry import Entry
-from second_brain.models.nudge import NudgeHistory
 from second_brain.prompts.scheduler_reasoning import (
     SCHEDULER_SYSTEM_PROMPT,
     SCHEDULER_USER_PROMPT_TEMPLATE,
@@ -305,7 +304,7 @@ class SchedulerService:
             logger.warning("Cannot send nudge: nudge_manager not available")
             return
 
-        nudge, formatted_text, keyboard = nudge_manager.create_nudge(
+        nudge_id, formatted_text, keyboard = nudge_manager.create_nudge(
             entry_id=entry_id,
             nudge_type=nudge_type,
             message=message,
@@ -335,7 +334,7 @@ class SchedulerService:
                     text=formatted_text,
                     reply_markup=inline_keyboard,
                 )
-                nudge_manager.set_telegram_message_id(nudge.id, sent.message_id)
+                nudge_manager.set_telegram_message_id(nudge_id, sent.message_id)
             except Exception:
                 logger.exception("Failed to send nudge via Telegram")
         else:
@@ -351,17 +350,17 @@ class SchedulerService:
 
         try:
             escalated = nudge_manager.check_escalations()
-            for nudge, formatted, keyboard in escalated:
-                await self._send_nudge_message(nudge, formatted, keyboard)
+            for nudge_id, formatted, keyboard in escalated:
+                await self._send_nudge_message(nudge_id, formatted, keyboard)
 
             # Also check snoozed nudges that have expired
             snoozed_due = nudge_manager.get_snoozed_due()
             for old_nudge in snoozed_due:
                 # Re-nudge at level 1
                 await self._send_nudge(
-                    entry_id=old_nudge.entry_id,
-                    nudge_type=old_nudge.nudge_type,
-                    message=old_nudge.message_text,
+                    entry_id=old_nudge["entry_id"],
+                    nudge_type=old_nudge["nudge_type"],
+                    message=old_nudge["message_text"],
                     escalation_level=1,
                 )
         except Exception:
@@ -369,7 +368,7 @@ class SchedulerService:
 
     async def _send_nudge_message(
         self,
-        nudge: object,
+        nudge_id: int,
         formatted_text: str,
         keyboard: list[list[dict]],
     ) -> None:
@@ -398,8 +397,8 @@ class SchedulerService:
                     reply_markup=inline_keyboard,
                 )
                 nudge_manager = self.services.get("nudge_manager")
-                if nudge_manager and hasattr(nudge, "id"):
-                    nudge_manager.set_telegram_message_id(nudge.id, sent.message_id)
+                if nudge_manager:
+                    nudge_manager.set_telegram_message_id(nudge_id, sent.message_id)
             except Exception:
                 logger.exception("Failed to send escalated nudge via Telegram")
 
