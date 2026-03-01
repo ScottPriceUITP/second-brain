@@ -180,6 +180,24 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: calendar_sync")
 
+    # Meeting brief service
+    try:
+        from second_brain.services.meeting_brief import MeetingBriefService
+
+        if "anthropic_client" in services:
+            services["meeting_brief"] = MeetingBriefService(
+                anthropic_client=services["anthropic_client"],
+                session_factory=session_factory,
+                calendar_sync=services.get("calendar_sync"),
+            )
+            logger.info("Service loaded: meeting_brief")
+        else:
+            logger.info("Service skipped (no anthropic_client): meeting_brief")
+    except ImportError:
+        logger.info("Service not available (skipped): meeting_brief")
+    except Exception:
+        logger.exception("Service failed to load: meeting_brief")
+
     return services
 
 
