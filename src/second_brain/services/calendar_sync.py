@@ -15,6 +15,7 @@ from second_brain.config import (
     get_config_bool,
 )
 from second_brain.models.calendar_event import CalendarEvent
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ class CalendarSyncService:
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Invalid google_calendar_ids config, using primary")
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         time_min = now.isoformat()
         time_max = (now + timedelta(hours=24)).isoformat()
 
@@ -220,7 +221,7 @@ class CalendarSyncService:
 
         # Check if event already exists
         existing = session.get(CalendarEvent, event_id)
-        now = datetime.now(timezone.utc)
+        now = utc_now()
 
         if existing:
             existing.calendar_id = calendar_id
@@ -312,7 +313,7 @@ class CalendarSyncService:
 
         with self.session_factory() as session:
             # Get events synced in the last hour
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+            cutoff = utc_now() - timedelta(hours=1)
             recent_events = (
                 session.query(CalendarEvent)
                 .filter(CalendarEvent.synced_at >= cutoff)
@@ -386,7 +387,7 @@ class CalendarSyncService:
         Returns:
             List of CalendarEvent records (detached from session).
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         cutoff = now + timedelta(minutes=minutes_ahead)
 
         with self.session_factory() as session:
@@ -411,7 +412,7 @@ class CalendarSyncService:
         Returns:
             List of CalendarEvent records (detached from session).
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         cutoff = now - timedelta(hours=hours_back)
 
         with self.session_factory() as session:

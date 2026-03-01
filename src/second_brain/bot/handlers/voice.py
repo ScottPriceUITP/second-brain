@@ -1,12 +1,13 @@
 """Voice message handler — transcribes audio via Whisper and feeds into enrichment."""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters
 
 from second_brain.bot.formatting import format_capture_confirmation, format_error
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,8 @@ async def handle_voice_message(
             status="pending_transcription",
             telegram_message_id=message.message_id,
             audio_file_id=voice.file_id,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         session.add(entry)
         session.commit()
@@ -164,9 +165,9 @@ async def _enrich_transcription(
         try:
             from second_brain.bot.formatting import format_query_response
 
-            result = query_engine.query(transcribed_text)
+            result = query_engine.handle_query(transcribed_text)
             response_text = format_query_response(
-                result.response, result.sources if hasattr(result, "sources") else []
+                result.answer, result.sources if hasattr(result, "sources") else []
             )
             await message.reply_text(response_text)
         except Exception:
@@ -242,7 +243,7 @@ def _get_recent_calendar_events(session_factory) -> list[dict] | None:
     try:
         from second_brain.models.calendar_event import CalendarEvent
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         window_start = now - timedelta(hours=2)
         window_end = now + timedelta(hours=4)
 

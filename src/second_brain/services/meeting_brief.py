@@ -19,6 +19,7 @@ from second_brain.prompts.meeting_brief import (
 )
 from second_brain.services.anthropic_client import AnthropicClient
 from second_brain.utils.fts import fts_search
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class MeetingBriefService:
                 get_config_int(session, "pre_meeting_brief_minutes") or 15
             )
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         cutoff = now + timedelta(minutes=brief_minutes)
 
         with self.session_factory() as session:
@@ -243,7 +244,7 @@ class MeetingBriefService:
             nudge_type="pre_meeting_brief",
             message_text=f"[event:{event.id}] {brief_text[:200]}",
             escalation_level=1,
-            sent_at=datetime.now(timezone.utc),
+            sent_at=utc_now(),
         )
         session.add(nudge)
         session.flush()

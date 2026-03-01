@@ -6,7 +6,7 @@ optional calendar event association.
 """
 
 import logging
-from datetime import date, timezone, datetime
+from datetime import date
 
 from second_brain.prompts.enrichment import (
     ENRICHMENT_SYSTEM_PROMPT,

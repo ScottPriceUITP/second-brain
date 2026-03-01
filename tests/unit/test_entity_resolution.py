@@ -11,6 +11,7 @@ from second_brain.services.entity_resolution import (
     EntityResolutionService,
     ResolvedEntities,
 )
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def engine():
                 "INSERT INTO config (key, value, updated_at) "
                 "VALUES ('entity_match_confidence_threshold', '0.8', :now)"
             ),
-            {"now": datetime.now(timezone.utc).isoformat()},
+            {"now": utc_now().isoformat()},
         )
         conn.commit()
     return eng
@@ -47,7 +48,7 @@ def _create_entity(session: Session, name: str, entity_type: str, merged_into_id
     entity = Entity(
         name=name,
         type=entity_type,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
         merged_into_id=merged_into_id,
     )
     session.add(entity)
@@ -60,8 +61,8 @@ def _create_entry(session: Session, raw_text: str) -> Entry:
         raw_text=raw_text,
         clean_text=raw_text,
         source="telegram_text",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     session.add(entry)
     session.flush()

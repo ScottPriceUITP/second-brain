@@ -1,11 +1,12 @@
 """Entity model and entry-entity junction table."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from second_brain.models.base import Base
+from second_brain.utils.time import utc_now
 
 # Junction table for entry-entity many-to-many
 entry_entities = Table(
@@ -25,7 +26,7 @@ class Entity(Base):
         Text, nullable=False
     )  # person/company/project/technology
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: utc_now(), nullable=False
     )
     merged_into_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("entities.id"), nullable=True

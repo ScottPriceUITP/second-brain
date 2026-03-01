@@ -11,13 +11,14 @@ from second_brain.models import Base
 from second_brain.models.entry import Entry
 from second_brain.models.nudge import NudgeHistory
 from second_brain.services.nudge_manager import NudgeManager
+from second_brain.utils.time import utc_now
 
 
 # SQLite strips timezone info from datetimes, so when check_escalations() does
-# datetime.now(timezone.utc) - nudge.sent_at, it fails (aware - naive).
+# utc_now() - nudge.sent_at, it fails (aware - naive).
 # We use _utcnow() for test data to match what SQLite round-trips.
 def _utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return utc_now()
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     with eng.connect() as conn:
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         for key, value in {
             "nudge_escalation_days": "3",
         }.items():

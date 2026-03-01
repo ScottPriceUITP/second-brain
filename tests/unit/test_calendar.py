@@ -15,6 +15,7 @@ from second_brain.services.calendar_sync import (
     _COMMON_EMAIL_DOMAINS,
     _domain_to_company,
 )
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     with eng.connect() as conn:
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         for key, value in {
             "entity_match_confidence_threshold": "0.8",
         }.items():
@@ -56,7 +57,7 @@ def _make_google_event(
 ):
     """Build a dict resembling a Google Calendar API event."""
     if start_dt is None:
-        start_dt = datetime.now(timezone.utc) + timedelta(hours=1)
+        start_dt = utc_now() + timedelta(hours=1)
     if end_dt is None:
         end_dt = start_dt + timedelta(hours=1)
 
@@ -263,7 +264,7 @@ class TestUpsertEvent:
 
 class TestGetUpcomingEvents:
     def test_returns_events_within_window(self, service, sf):
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             soon = CalendarEvent(
                 id="soon_1",
@@ -301,7 +302,7 @@ class TestGetUpcomingEvents:
         assert events == []
 
     def test_custom_minutes_ahead(self, service, sf):
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event = CalendarEvent(
                 id="custom_1",
@@ -325,7 +326,7 @@ class TestGetUpcomingEvents:
 
 class TestGetRecentEvents:
     def test_returns_recent_events(self, service, sf):
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             recent = CalendarEvent(
                 id="recent_1",
@@ -355,7 +356,7 @@ class TestGetRecentEvents:
         assert events == []
 
     def test_custom_hours_back(self, service, sf):
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event = CalendarEvent(
                 id="hours_1",
@@ -379,7 +380,7 @@ class TestAttendeeEntityMatching:
     @patch("second_brain.services.entity_resolution.EntityResolutionService")
     def test_matches_attendees_to_entities(self, MockResolver, service, sf):
         """Attendees from recently synced events are resolved as entities."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event = CalendarEvent(
                 id="match_1",
@@ -422,7 +423,7 @@ class TestAttendeeEntityMatching:
     @patch("second_brain.services.entity_resolution.EntityResolutionService")
     def test_skips_common_email_domains(self, MockResolver, service, sf):
         """Gmail, Yahoo etc. should not create company entities."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event = CalendarEvent(
                 id="common_1",
@@ -454,7 +455,7 @@ class TestAttendeeEntityMatching:
     @patch("second_brain.services.entity_resolution.EntityResolutionService")
     def test_derives_name_from_email_when_missing(self, MockResolver, service, sf):
         """When attendee has no name, derive from email local part."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event = CalendarEvent(
                 id="noname_1",
@@ -490,7 +491,7 @@ class TestAttendeeEntityMatching:
     @patch("second_brain.services.entity_resolution.EntityResolutionService")
     def test_deduplicates_entities(self, MockResolver, service, sf):
         """Duplicate attendees across events are deduplicated."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         with sf() as session:
             event1 = CalendarEvent(
                 id="dedup_1",
@@ -544,7 +545,7 @@ class TestSyncCalendars:
     @patch.object(CalendarSyncService, "_get_service")
     def test_sync_fetches_and_upserts_events(self, mock_get_svc, service, sf):
         """sync_calendars fetches events from Google API and upserts them."""
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         mock_events = {
             "items": [
                 _make_google_event(

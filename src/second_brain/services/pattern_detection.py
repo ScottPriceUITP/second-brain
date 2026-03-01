@@ -5,7 +5,7 @@ genuinely interesting cross-entry insights.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,6 +18,7 @@ from second_brain.prompts.pattern_detection import (
     build_pattern_detection_user_prompt,
 )
 from second_brain.services.anthropic_client import AnthropicClient
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class PatternDetectionService:
         Returns:
             List of entry dicts with id, clean_text, entry_type, created_at, and tags.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff = utc_now() - timedelta(days=7)
 
         with self.session_factory() as session:
             entries = (
@@ -111,7 +112,7 @@ class PatternDetectionService:
                     nudge_type="pattern_insight",
                     message_text=pattern.insight_text,
                     escalation_level=1,
-                    sent_at=datetime.now(timezone.utc),
+                    sent_at=utc_now(),
                 )
                 session.add(nudge)
 

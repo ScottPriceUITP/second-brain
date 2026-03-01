@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def get_config_bool(session: Session, key: str) -> bool | None:
 
 def set_config(session: Session, key: str, value: str) -> None:
     """Write a config value to the config table (upsert)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = utc_now().isoformat()
     session.execute(
         text(
             "INSERT INTO config (key, value, updated_at) VALUES (:key, :value, :now) "
@@ -95,7 +96,7 @@ def set_config(session: Session, key: str, value: str) -> None:
 
 def seed_config_defaults(session: Session) -> None:
     """Insert default config values for any keys not already present."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = utc_now().isoformat()
     for key, value in CONFIG_DEFAULTS.items():
         session.execute(
             text(

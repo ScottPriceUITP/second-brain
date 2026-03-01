@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -11,6 +10,7 @@ from second_brain.config import get_config_float
 from second_brain.models.entity import Entity, entry_entities
 from second_brain.models.entity_merge import EntityMerge
 from second_brain.utils.fuzzy_match import fuzzy_match
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ class EntityResolutionService:
         entity = Entity(
             name=name,
             type=entity_type,
-            created_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
         )
         self.session.add(entity)
         self.session.flush()
@@ -225,7 +225,7 @@ class EntityResolutionService:
         merge_record = EntityMerge(
             source_entity_id=source.id,
             target_entity_id=target.id,
-            merged_at=datetime.now(timezone.utc),
+            merged_at=utc_now(),
         )
         self.session.add(merge_record)
 

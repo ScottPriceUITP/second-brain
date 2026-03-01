@@ -15,6 +15,7 @@ from second_brain.prompts.query_simple import SimpleQueryResponse
 from second_brain.prompts.query_synthesis import SynthesisQueryResponse
 from second_brain.services.query_engine import QueryEngine, QueryResponse
 from second_brain.services.query_session import QuerySession
+from second_brain.utils.time import utc_now
 
 
 def _seed_entries(session_factory):
@@ -55,8 +56,8 @@ def _seed_entries(session_factory):
                 entry_type=data["entry_type"],
                 status=data["status"],
                 source="telegram_text",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             session.add(entry)
             session.flush()
@@ -66,12 +67,12 @@ def _seed_entries(session_factory):
         reynolds = Entity(
             name="Reynolds Electric",
             type="company",
-            created_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
         )
         sarah = Entity(
             name="Sarah Chen",
             type="person",
-            created_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
         )
         session.add_all([reynolds, sarah])
         session.flush()

@@ -1,10 +1,11 @@
 """Callback query handlers for inline buttons (nudges and entity disambiguation)."""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ async def entity_callback(
             entity = Entity(
                 name=entity_name,
                 type=entity_type,
-                created_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
             )
             session.add(entity)
             session.flush()

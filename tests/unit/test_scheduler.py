@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from second_brain.models import Base
 from second_brain.services.scheduler import SchedulerService
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -16,7 +17,7 @@ def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     with eng.connect() as conn:
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         for key, value in {
             "scheduler_interval_hours": "2",
             "scheduler_start_hour": "8",
@@ -54,6 +55,8 @@ class TestJobRegistration:
         assert "calendar_sync" in job_ids
         assert "meeting_check" in job_ids
         assert "retry_jobs" in job_ids
+        assert "escalation_check" in job_ids
+        assert "pattern_detection" in job_ids
 
         svc.shutdown()
 
@@ -87,7 +90,7 @@ class TestJobRegistration:
         svc.setup_scheduler(bot_data={})
 
         job_ids = [job.id for job in svc.scheduler.get_jobs()]
-        assert len(job_ids) == 4
+        assert len(job_ids) == 6
         svc.shutdown()
 
 

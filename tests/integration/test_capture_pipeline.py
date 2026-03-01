@@ -19,6 +19,7 @@ from second_brain.services.connection_scoring import (
     ConnectionScore,
     ConnectionScoringResponse,
 )
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -172,8 +173,8 @@ class TestCapturePipeline:
                     source="telegram_text",
                     status="open",
                     entry_type="meeting_note",
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
                 )
                 s.add(existing)
             s.commit()
@@ -276,11 +277,11 @@ class TestCapturePipeline:
         query_enrichment.enrich_text = MagicMock(return_value=enrichment_result_query)
 
         mock_query_result = MagicMock()
-        mock_query_result.response = "Reynolds Electric was discussed in your meeting on Feb 15."
+        mock_query_result.answer = "Reynolds Electric was discussed in your meeting on Feb 15."
         mock_query_result.sources = []
 
         mock_query_engine = MagicMock()
-        mock_query_engine.query = MagicMock(return_value=mock_query_result)
+        mock_query_engine.handle_query = MagicMock(return_value=mock_query_result)
 
         update = MagicMock()
         update.message = MagicMock()
@@ -299,7 +300,7 @@ class TestCapturePipeline:
         await handle_text_message(update, context)
 
         # Query engine should have been called
-        mock_query_engine.query.assert_called_once()
+        mock_query_engine.handle_query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_capture_with_entity_reuse(
@@ -314,7 +315,7 @@ class TestCapturePipeline:
             existing_entity = Entity(
                 name="Reynolds Electric",
                 type="company",
-                created_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
             )
             s.add(existing_entity)
             s.commit()

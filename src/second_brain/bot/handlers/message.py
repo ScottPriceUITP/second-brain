@@ -1,7 +1,7 @@
 """Text message handler — receives text from Telegram, enriches, and stores entries."""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, MessageHandler, filters
@@ -11,6 +11,7 @@ from second_brain.bot.formatting import (
     format_error,
     format_query_response,
 )
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ async def handle_text_message(
             source="telegram_text",
             status="pending_enrichment",
             telegram_message_id=message.message_id,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         session.add(entry)
         session.commit()
@@ -179,9 +180,20 @@ async def _handle_query(
         return
 
     try:
-        result = query_engine.query(raw_text)
+        session_manager = context.bot_data.get("query_session_manager")
+        session_ctx = None
+        if session_manager:
+            session_ctx = session_manager.session
+
+        result = query_engine.handle_query(raw_text, session_context=session_ctx)
+
+        # Update session
+        if session_manager:
+            source_ids = [s.entry_id for s in result.sources]
+            session_manager.update(raw_text, result.answer, source_ids)
+
         response_text = format_query_response(
-            result.response, result.sources if hasattr(result, "sources") else []
+            result.answer, result.sources if hasattr(result, "sources") else []
         )
         await update.message.reply_text(response_text)
     except Exception:
@@ -196,7 +208,7 @@ def _get_recent_calendar_events(session_factory) -> list[dict] | None:
     try:
         from second_brain.models.calendar_event import CalendarEvent
 
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         window_start = now - timedelta(hours=2)
         window_end = now + timedelta(hours=4)
 

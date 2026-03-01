@@ -19,6 +19,7 @@ from second_brain.services.query_engine import (
     _ClassifyResponse,
 )
 from second_brain.services.query_session import QuerySession
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def engine():
             "INSERT INTO entries_fts(rowid, clean_text) VALUES (new.id, new.clean_text); "
             "END;"
         ))
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         conn.execute(text(
             "INSERT INTO config (key, value, updated_at) VALUES "
             "('query_max_entries', '30', :now)"
@@ -75,8 +76,8 @@ def _add_entry(session, clean_text, entry_type="personal"):
         clean_text=clean_text,
         source="telegram_text",
         entry_type=entry_type,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     session.add(entry)
     session.flush()
@@ -87,7 +88,7 @@ def _add_entity(session, name, entity_type="person"):
     entity = Entity(
         name=name,
         type=entity_type,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
     )
     session.add(entity)
     session.flush()

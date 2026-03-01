@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class QuerySession:
     query: str = ""
     response: str = ""
     source_entry_ids: list[int] = field(default_factory=list)
-    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: utc_now())
 
 
 class QuerySessionManager:
@@ -46,7 +47,7 @@ class QuerySessionManager:
         if self._session is None:
             return False
 
-        elapsed = (datetime.now(timezone.utc) - self._session.last_activity).total_seconds()
+        elapsed = (utc_now() - self._session.last_activity).total_seconds()
         return elapsed < timeout_minutes * 60
 
     def update(self, query: str, response: str, source_entry_ids: list[int]) -> None:
@@ -61,7 +62,7 @@ class QuerySessionManager:
             query=query,
             response=response,
             source_entry_ids=source_entry_ids,
-            last_activity=datetime.now(timezone.utc),
+            last_activity=utc_now(),
         )
         logger.debug("Query session updated: query=%s", query[:80])
 

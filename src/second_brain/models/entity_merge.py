@@ -1,11 +1,12 @@
 """Entity merge tracking model."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from second_brain.models.base import Base
+from second_brain.utils.time import utc_now
 
 
 class EntityMerge(Base):
@@ -19,5 +20,5 @@ class EntityMerge(Base):
         Integer, ForeignKey("entities.id"), nullable=False
     )
     merged_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: utc_now(), nullable=False
     )

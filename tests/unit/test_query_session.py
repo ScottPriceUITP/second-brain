@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from second_brain.services.query_session import QuerySession, QuerySessionManager
+from second_brain.utils.time import utc_now
 
 
 class TestQuerySession:
@@ -44,19 +45,19 @@ class TestQuerySessionManagerIsActive:
         mgr = QuerySessionManager()
         mgr.update("q", "r", [1])
         # Manually backdate the session
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=11)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=11)
         assert mgr.is_active() is False
 
     def test_within_default_timeout(self):
         mgr = QuerySessionManager()
         mgr.update("q", "r", [1])
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=9)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=9)
         assert mgr.is_active() is True
 
     def test_custom_timeout(self):
         mgr = QuerySessionManager()
         mgr.update("q", "r", [1])
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=25)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=25)
         # Still active with a 30-minute timeout
         assert mgr.is_active(timeout_minutes=30) is True
         # Not active with a 20-minute timeout
@@ -66,7 +67,7 @@ class TestQuerySessionManagerIsActive:
         mgr = QuerySessionManager()
         mgr.update("q", "r", [1])
         # Set to exactly 10 minutes ago — should be expired (< not <=)
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=10)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=10)
         assert mgr.is_active() is False
 
 
@@ -94,7 +95,7 @@ class TestQuerySessionManagerUpdate:
         mgr = QuerySessionManager()
         mgr.update("q1", "r1", [1])
         # Backdate the session
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=15)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=15)
         assert mgr.is_active() is False
 
         # Update should refresh the timestamp
@@ -131,7 +132,7 @@ class TestQuerySessionManagerSessionProperty:
     def test_session_returns_none_when_expired(self):
         mgr = QuerySessionManager()
         mgr.update("q", "r", [1])
-        mgr._session.last_activity = datetime.now(timezone.utc) - timedelta(minutes=15)
+        mgr._session.last_activity = utc_now() - timedelta(minutes=15)
         # .session property should return None for expired sessions
         assert mgr.session is None
 

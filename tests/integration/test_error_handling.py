@@ -15,6 +15,7 @@ from second_brain.models.entry import Entry
 from second_brain.prompts.enrichment import EnrichmentResult, ExtractedEntity
 from second_brain.services.retry_manager import RetryManager
 from second_brain.services.whisper_client import TranscriptionResult
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -96,8 +97,8 @@ class TestEnrichmentErrorHandling:
                 raw_text="Test message for retry",
                 source="telegram_text",
                 status="pending_enrichment",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -143,8 +144,8 @@ class TestEnrichmentErrorHandling:
                 raw_text="Failing entry",
                 source="telegram_text",
                 status="pending_enrichment",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -181,8 +182,8 @@ class TestEnrichmentErrorHandling:
                 raw_text="Test message that keeps failing",
                 source="telegram_text",
                 status="pending_enrichment",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -308,8 +309,8 @@ class TestTranscriptionErrorHandling:
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id="retry_audio_file_id",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -366,8 +367,8 @@ class TestTranscriptionErrorHandling:
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id="failing_audio_file_id",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -417,8 +418,8 @@ class TestTranscriptionErrorHandling:
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id="partial_success_file_id",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -485,8 +486,8 @@ class TestTranscriptionErrorHandling:
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id="no_bot_file_id",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -521,8 +522,8 @@ class TestTranscriptionErrorHandling:
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id=None,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add(entry)
             s.commit()
@@ -702,16 +703,16 @@ class TestEndToEndErrorRecovery:
                 raw_text="Pending enrichment note",
                 source="telegram_text",
                 status="pending_enrichment",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             e2 = Entry(
                 raw_text="",
                 source="telegram_voice",
                 status="pending_transcription",
                 audio_file_id="both_test_file_id",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             s.add_all([e1, e2])
             s.commit()

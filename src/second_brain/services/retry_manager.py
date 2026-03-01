@@ -6,7 +6,7 @@ Tracks retry counts in memory and notifies the user on recovery or exhaustion.
 """
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +15,7 @@ from second_brain.config import get_config_int
 from second_brain.models.entry import Entry
 from second_brain.services.enrichment import EnrichmentService
 from second_brain.services.whisper_client import WhisperClient
+from second_brain.utils.tags import store_tags
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class RetryManager:
                 if result.calendar_event_id:
                     entry.calendar_event_id = result.calendar_event_id
 
-                _store_tags(session, entry, result.tags)
+                store_tags(session, entry, result.tags)
 
                 session.commit()
                 self._enrichment_retries.pop(entry.id, None)
@@ -273,7 +274,7 @@ class RetryManager:
                         if result.calendar_event_id:
                             entry.calendar_event_id = result.calendar_event_id
 
-                        _store_tags(session, entry, result.tags)
+                        store_tags(session, entry, result.tags)
                         session.commit()
                     except Exception:
                         # Transcription succeeded but enrichment failed —
@@ -323,23 +324,3 @@ def _format_time(dt: datetime) -> str:
     return dt.strftime("%-I:%M %p")
 
 
-def _store_tags(session, entry, tag_names: list[str]) -> None:
-    """Create or get-existing tags and link them to the entry."""
-    if not tag_names:
-        return
-
-    from second_brain.models.tag import Tag
-
-    for tag_name in tag_names:
-        tag_name = tag_name.strip().lower()
-        if not tag_name:
-            continue
-
-        tag = session.query(Tag).filter(Tag.name == tag_name).first()
-        if not tag:
-            tag = Tag(name=tag_name)
-            session.add(tag)
-            session.flush()
-
-        if tag not in entry.tags:
-            entry.tags.append(tag)

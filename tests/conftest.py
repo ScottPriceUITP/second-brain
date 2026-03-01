@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from second_brain.models import Base
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def engine():
             "END;"
         ))
         # Seed config defaults
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         for key, value in {
             "connection_score_threshold": "4",
             "connection_min_count": "2",
@@ -145,8 +146,8 @@ def make_entry(session, **kwargs):
         "raw_text": "Test entry",
         "source": "telegram_text",
         "status": "open",
-        "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc),
+        "created_at": utc_now(),
+        "updated_at": utc_now(),
     }
     defaults.update(kwargs)
     entry = Entry(**defaults)
@@ -162,7 +163,7 @@ def make_entity(session, name="Test Entity", entity_type="person"):
     entity = Entity(
         name=name,
         type=entity_type,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
     )
     session.add(entity)
     session.flush()

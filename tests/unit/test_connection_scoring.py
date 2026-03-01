@@ -17,6 +17,7 @@ from second_brain.services.connection_scoring import (
     ConnectionScoringService,
     ScoredConnection,
 )
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def engine():
             "END;"
         ))
         # Seed config
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now().isoformat()
         conn.execute(text(
             "INSERT INTO config (key, value, updated_at) VALUES "
             "('connection_score_threshold', '4', :now)"
@@ -73,8 +74,8 @@ def _add_entry(session, clean_text: str) -> Entry:
         raw_text=clean_text,
         clean_text=clean_text,
         source="telegram_text",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     session.add(entry)
     session.flush()
@@ -85,7 +86,7 @@ def _add_entity(session, name: str, entity_type: str) -> Entity:
     entity = Entity(
         name=name,
         type=entity_type,
-        created_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
     )
     session.add(entity)
     session.flush()
@@ -218,8 +219,8 @@ class TestConnectionScoringService:
             raw_text="hi",
             clean_text="",
             source="telegram_text",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         session.add(entry)
         session.flush()

@@ -1,11 +1,12 @@
 """Entry model — the core knowledge unit."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, Integer, LargeBinary, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from second_brain.models.base import Base
+from second_brain.utils.time import utc_now
 
 
 class Entry(Base):
@@ -13,12 +14,12 @@ class Entry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: utc_now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: utc_now(),
+        onupdate=lambda: utc_now(),
         nullable=False,
     )
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)

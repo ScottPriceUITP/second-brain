@@ -82,7 +82,6 @@ def build_services(session_factory) -> dict:
         if "anthropic_client" in services:
             services["enrichment"] = EnrichmentService(
                 anthropic_client=services["anthropic_client"],
-                session_factory=session_factory,
             )
             logger.info("Service loaded: enrichment")
         else:
@@ -92,35 +91,16 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: enrichment")
 
-    # Entity resolution
+    # Query session manager
     try:
-        from second_brain.services.entity_resolution import EntityResolutionService
+        from second_brain.services.query_session import QuerySessionManager
 
-        services["entity_resolution"] = EntityResolutionService(
-            session_factory=session_factory,
-        )
-        logger.info("Service loaded: entity_resolution")
+        services["query_session_manager"] = QuerySessionManager()
+        logger.info("Service loaded: query_session_manager")
     except ImportError:
-        logger.info("Service not available (skipped): entity_resolution")
+        logger.info("Service not available (skipped): query_session_manager")
     except Exception:
-        logger.exception("Service failed to load: entity_resolution")
-
-    # Connection scoring
-    try:
-        from second_brain.services.connection_scoring import ConnectionScoringService
-
-        if "anthropic_client" in services:
-            services["connection_scoring"] = ConnectionScoringService(
-                anthropic_client=services["anthropic_client"],
-                session_factory=session_factory,
-            )
-            logger.info("Service loaded: connection_scoring")
-        else:
-            logger.info("Service skipped (no anthropic_client): connection_scoring")
-    except ImportError:
-        logger.info("Service not available (skipped): connection_scoring")
-    except Exception:
-        logger.exception("Service failed to load: connection_scoring")
+        logger.exception("Service failed to load: query_session_manager")
 
     # Query engine
     try:
@@ -138,6 +118,23 @@ def build_services(session_factory) -> dict:
         logger.info("Service not available (skipped): query_engine")
     except Exception:
         logger.exception("Service failed to load: query_engine")
+
+    # Pattern detection
+    try:
+        from second_brain.services.pattern_detection import PatternDetectionService
+
+        if "anthropic_client" in services:
+            services["pattern_detection"] = PatternDetectionService(
+                anthropic_client=services["anthropic_client"],
+                session_factory=session_factory,
+            )
+            logger.info("Service loaded: pattern_detection")
+        else:
+            logger.info("Service skipped (no anthropic_client): pattern_detection")
+    except ImportError:
+        logger.info("Service not available (skipped): pattern_detection")
+    except Exception:
+        logger.exception("Service failed to load: pattern_detection")
 
     # Nudge manager
     try:

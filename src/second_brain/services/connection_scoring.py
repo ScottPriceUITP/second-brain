@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,6 +15,7 @@ from second_brain.prompts.connection_scoring import (
 )
 from second_brain.services.anthropic_client import AnthropicClient
 from second_brain.utils.fts import fts_search
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ class ConnectionScoringService:
                 to_entry_id=conn.candidate_id,
                 relation_type=conn.relation_type,
                 confidence_score=float(conn.score),
-                created_at=datetime.now(timezone.utc),
+                created_at=utc_now(),
             )
             self.session.add(relation)
 

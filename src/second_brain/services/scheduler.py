@@ -6,10 +6,9 @@ upcoming meetings, and retry failed operations.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import and_
 from sqlalchemy.orm import sessionmaker
 
 from second_brain.config import get_config_int
@@ -22,6 +21,7 @@ from second_brain.prompts.scheduler_reasoning import (
     SchedulerDecision,
 )
 from second_brain.services.anthropic_client import AnthropicClient
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,9 @@ class SchedulerService:
             retry_minutes = (
                 get_config_int(session, "enrichment_retry_interval_minutes") or 10
             )
+            escalation_minutes = (
+                get_config_int(session, "escalation_check_interval_minutes") or 15
+            )
 
         # Main scheduler: every N hours during active hours
         self.scheduler.add_job(
@@ -103,16 +106,36 @@ class SchedulerService:
             replace_existing=True,
         )
 
+        # Escalation check
+        self.scheduler.add_job(
+            self.run_escalation_check,
+            "interval",
+            minutes=escalation_minutes,
+            id="escalation_check",
+            replace_existing=True,
+        )
+
+        # Pattern detection — daily end-of-day insights
+        self.scheduler.add_job(
+            self._run_pattern_detection,
+            "cron",
+            hour=20,
+            id="pattern_detection",
+            replace_existing=True,
+        )
+
         self.scheduler.start()
         logger.info(
             "Scheduler started: main every %dh (%d-%d), "
-            "calendar every %dm, meetings every %dm, retries every %dm",
+            "calendar every %dm, meetings every %dm, retries every %dm, "
+            "escalation every %dm, pattern detection daily at 20:00",
             scheduler_hours,
             start_hour,
             end_hour,
             calendar_minutes,
             meeting_minutes,
             retry_minutes,
+            escalation_minutes,
         )
 
     async def _run_main_scheduler(self) -> None:
@@ -124,7 +147,7 @@ class SchedulerService:
         logger.info("Main scheduler running")
 
         try:
-            now = datetime.now(timezone.utc)
+            now = utc_now()
 
             with self.session_factory() as session:
                 # 1. Pull open loops
@@ -246,6 +269,25 @@ class SchedulerService:
                 await retry_manager.retry_pending()
         except Exception:
             logger.exception("Retry job failed")
+
+    async def _run_pattern_detection(self) -> None:
+        """Pattern detection job — detects patterns and sends nudges for insights."""
+        pattern_detection = self.services.get("pattern_detection")
+        if not pattern_detection:
+            logger.debug("Pattern detection skipped: service not available")
+            return
+
+        try:
+            logger.info("Pattern detection running")
+            insights = pattern_detection.detect_patterns()
+            for insight in insights:
+                await self._send_nudge(
+                    entry_id=None,
+                    nudge_type="pattern_insight",
+                    message=insight.insight_text,
+                )
+        except Exception:
+            logger.exception("Pattern detection job failed")
 
     async def _send_nudge(
         self,

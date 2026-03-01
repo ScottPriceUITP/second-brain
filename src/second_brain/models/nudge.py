@@ -1,11 +1,12 @@
 """Nudge history model — tracks all proactive nudges sent to the user."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from second_brain.models.base import Base
+from second_brain.utils.time import utc_now
 
 
 class NudgeHistory(Base):
@@ -21,7 +22,7 @@ class NudgeHistory(Base):
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime, default=lambda: utc_now(), nullable=False
     )
     escalation_level: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False

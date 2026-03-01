@@ -15,6 +15,7 @@ from second_brain.prompts.nudge_parsing import (
     NudgeParsingResult,
 )
 from second_brain.services.anthropic_client import AnthropicClient
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class NudgeManager:
                 nudge_type=nudge_type,
                 message_text=message,
                 escalation_level=escalation_level,
-                sent_at=datetime.now(timezone.utc),
+                sent_at=utc_now(),
             )
             session.add(nudge)
             session.commit()
@@ -113,7 +114,7 @@ class NudgeManager:
                 logger.warning("Nudge not found: %d", nudge_id)
                 return "Nudge not found."
 
-            now = datetime.now(timezone.utc)
+            now = utc_now()
             nudge.user_action = action
             nudge.user_action_at = now
 
@@ -199,7 +200,7 @@ class NudgeManager:
         Returns:
             List of (new_nudge, formatted_message, keyboard) tuples for sending.
         """
-        now = datetime.now(timezone.utc)
+        now = utc_now()
         pending: list[dict] = []
 
         with self.session_factory() as session:

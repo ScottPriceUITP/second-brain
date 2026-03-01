@@ -1,12 +1,12 @@
 """Telegram command handlers for /ask, /note, /config, /status, /open, /search."""
 
 import logging
-from datetime import datetime, timezone
 
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
 from second_brain.bot.formatting import format_query_response
+from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,8 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 is_open_loop=result.is_open_loop,
                 status="open",
                 telegram_message_id=update.message.message_id,
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             if result.follow_up_date:
                 from datetime import date as date_type
@@ -96,6 +98,14 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     pass
 
             session.add(entry)
+            session.flush()
+
+            # Resolve entities
+            _resolve_entities(context, session, entry, result.entities)
+
+            # Score connections
+            _score_connections(context, session, entry)
+
             session.commit()
 
             from second_brain.bot.formatting import format_capture_confirmation
@@ -283,6 +293,57 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"\n[{date_str}, {entry.entry_type}] {snippet}")
 
     await update.message.reply_text("\n".join(lines))
+
+
+def _resolve_entities(context, session, entry, extracted_entities):
+    """Resolve extracted entities via EntityResolutionService and link to entry."""
+    if not extracted_entities:
+        return None
+
+    try:
+        from second_brain.services.entity_resolution import EntityResolutionService
+
+        service = EntityResolutionService(session=session)
+
+        entity_dicts = [
+            {"name": e.name, "type": e.type} for e in extracted_entities
+        ]
+        resolved = service.resolve_entities(
+            extracted_entities=entity_dicts,
+        )
+
+        from second_brain.models.entity import Entity
+
+        for linked in resolved.auto_linked:
+            entity = session.get(Entity, linked.entity_id)
+            if entity and entity not in entry.entities:
+                entry.entities.append(entity)
+
+        for new_ent in resolved.new_created:
+            entity = session.get(Entity, new_ent.entity_id)
+            if entity and entity not in entry.entities:
+                entry.entities.append(entity)
+
+        return resolved
+    except Exception:
+        logger.exception("Entity resolution failed for entry %d", entry.id)
+        return None
+
+
+def _score_connections(context, session, entry):
+    """Score connections between this entry and existing entries."""
+    anthropic_client = context.bot_data.get("anthropic_client")
+    if not anthropic_client:
+        return []
+
+    try:
+        from second_brain.services.connection_scoring import ConnectionScoringService
+
+        service = ConnectionScoringService(client=anthropic_client, session=session)
+        return service.score_connections(entry=entry)
+    except Exception:
+        logger.exception("Connection scoring failed for entry %d", entry.id)
+        return []
 
 
 def register(application) -> None:

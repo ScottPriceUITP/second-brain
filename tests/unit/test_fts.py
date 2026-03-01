@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from second_brain.models import Base
 from second_brain.models.entry import Entry
 from second_brain.utils.fts import _sanitize_fts_query, fts_search
+from second_brain.utils.time import utc_now
 
 
 @pytest.fixture
@@ -50,8 +51,8 @@ def _add_entry(session, clean_text: str) -> Entry:
         raw_text=clean_text,
         clean_text=clean_text,
         source="telegram_text",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     session.add(entry)
     session.flush()
