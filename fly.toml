@@ -1,0 +1,12 @@
+app = "second-brain"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[mounts]
+  source = "second_brain_data"
+  destination = "/app/data"
+
+[env]
+  PYTHONUNBUFFERED = "1"
