@@ -139,6 +139,23 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: query_engine")
 
+    # Nudge manager
+    try:
+        from second_brain.services.nudge_manager import NudgeManager
+
+        if "anthropic_client" in services:
+            services["nudge_manager"] = NudgeManager(
+                session_factory=session_factory,
+                anthropic_client=services["anthropic_client"],
+            )
+            logger.info("Service loaded: nudge_manager")
+        else:
+            logger.info("Service skipped (no anthropic_client): nudge_manager")
+    except ImportError:
+        logger.info("Service not available (skipped): nudge_manager")
+    except Exception:
+        logger.exception("Service failed to load: nudge_manager")
+
     # Scheduler
     try:
         from second_brain.services.scheduler import SchedulerService
