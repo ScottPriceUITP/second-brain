@@ -1,12 +1,20 @@
-"""Retry manager — retries failed enrichments and transcriptions on a schedule."""
+"""Retry manager — retries failed enrichments and transcriptions.
+
+Runs as an APScheduler job (registered in scheduler.py) to periodically
+retry entries stuck in pending_enrichment or pending_transcription status.
+Tracks retry counts in memory and notifies the user on recovery or exhaustion.
+"""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import sessionmaker
 
 from second_brain.bot.formatting import format_error, format_recovery
 from second_brain.config import get_config_int
+from second_brain.models.entry import Entry
+from second_brain.services.enrichment import EnrichmentService
+from second_brain.services.whisper_client import WhisperClient
 
 logger = logging.getLogger(__name__)
 
@@ -16,28 +24,34 @@ class RetryManager:
 
     Called periodically by the scheduler. Tracks retry counts in memory
     per entry ID and stops retrying after a configurable max retry count.
+    Counts reset on process restart, which is acceptable because a restart
+    likely means external APIs have recovered.
     """
 
     def __init__(
         self,
         session_factory: sessionmaker,
-        enrichment_service=None,
-        whisper_client=None,
+        enrichment_service: EnrichmentService | None = None,
+        whisper_client: WhisperClient | None = None,
+        bot: object | None = None,
+        chat_id: int | str | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.enrichment_service = enrichment_service
         self.whisper_client = whisper_client
+        self._bot = bot
+        self._chat_id = chat_id
         # In-memory retry count tracking: entry_id -> count
         self._enrichment_retries: dict[int, int] = {}
         self._transcription_retries: dict[int, int] = {}
 
-    def _get_max_enrichment_retries(self) -> int:
-        with self.session_factory() as session:
-            return get_config_int(session, "enrichment_retry_count") or 3
+    def set_bot(self, bot: object) -> None:
+        """Set or update the Telegram bot instance for audio re-downloads."""
+        self._bot = bot
 
-    def _get_max_transcription_retries(self) -> int:
-        with self.session_factory() as session:
-            return get_config_int(session, "transcription_retry_count") or 3
+    def set_chat_id(self, chat_id: int | str) -> None:
+        """Set or update the Telegram chat ID for notifications."""
+        self._chat_id = chat_id
 
     async def retry_pending(self) -> None:
         """Retry all pending enrichments and transcriptions.
@@ -48,16 +62,20 @@ class RetryManager:
         await self.retry_pending_transcriptions()
 
     async def retry_pending_enrichments(self) -> None:
-        """Find entries with status='pending_enrichment' and retry enrichment."""
+        """Find entries with status='pending_enrichment' and retry enrichment.
+
+        On success: update entry with enrichment results, set status='open',
+        notify user via format_recovery().
+        On failure: increment retry count.  If max retries exhausted,
+        set status='open', notify user via format_error().
+        """
         if not self.enrichment_service:
             logger.debug("Enrichment retry skipped: no enrichment service")
             return
 
-        from second_brain.models.entry import Entry
-
-        max_retries = self._get_max_enrichment_retries()
-
         with self.session_factory() as session:
+            max_retries = get_config_int(session, "enrichment_retry_count") or 3
+
             pending = (
                 session.query(Entry)
                 .filter(Entry.status == "pending_enrichment")
@@ -73,22 +91,22 @@ class RetryManager:
                 count = self._enrichment_retries.get(entry.id, 0)
 
                 if count >= max_retries:
-                    logger.warning(
-                        "Max enrichment retries (%d) exhausted for entry %d",
-                        max_retries,
-                        entry.id,
-                    )
+                    # Max retries exhausted — mark open and notify
                     entry.status = "open"
                     self._enrichment_retries.pop(entry.id, None)
                     session.commit()
 
-                    # Queue notification for exhaustion
-                    created_str = entry.created_at.strftime("%Y-%m-%d %H:%M")
+                    time_str = _format_time(entry.created_at)
                     await self._notify(
                         format_error(
-                            f"I still can't enrich your note from {created_str}. "
+                            f"I still can't enrich your note from {time_str}. "
                             "It's stored as-is."
                         )
+                    )
+                    logger.warning(
+                        "Max enrichment retries (%d) exhausted for entry %d",
+                        max_retries,
+                        entry.id,
                     )
                     continue
 
@@ -98,46 +116,6 @@ class RetryManager:
                     result = self.enrichment_service.enrich_text(
                         raw_text=entry.raw_text,
                     )
-
-                    entry.clean_text = result.clean_text
-                    entry.entry_type = result.entry_type
-                    entry.is_open_loop = result.is_open_loop
-                    entry.status = "open"
-
-                    if result.follow_up_date:
-                        try:
-                            from datetime import date
-
-                            entry.follow_up_date = date.fromisoformat(
-                                result.follow_up_date
-                            )
-                        except ValueError:
-                            pass
-
-                    if result.calendar_event_id:
-                        entry.calendar_event_id = result.calendar_event_id
-
-                    # Store tags
-                    _store_tags(session, entry, result.tags)
-
-                    session.commit()
-
-                    # Clean up retry tracking
-                    self._enrichment_retries.pop(entry.id, None)
-
-                    created_str = entry.created_at.strftime("%Y-%m-%d %H:%M")
-                    await self._notify(
-                        format_recovery(
-                            f"Your note from {created_str} has been fully processed."
-                        )
-                    )
-
-                    logger.info(
-                        "Enrichment retry succeeded for entry %d on attempt %d",
-                        entry.id,
-                        count + 1,
-                    )
-
                 except Exception:
                     logger.warning(
                         "Enrichment retry %d/%d failed for entry %d",
@@ -145,18 +123,61 @@ class RetryManager:
                         max_retries,
                         entry.id,
                     )
+                    continue
+
+                # Success — update entry with enrichment results
+                entry.clean_text = result.clean_text
+                entry.entry_type = result.entry_type
+                entry.is_open_loop = result.is_open_loop
+                entry.status = "open"
+
+                if result.follow_up_date:
+                    try:
+                        entry.follow_up_date = date.fromisoformat(
+                            result.follow_up_date
+                        )
+                    except ValueError:
+                        pass
+
+                if result.calendar_event_id:
+                    entry.calendar_event_id = result.calendar_event_id
+
+                _store_tags(session, entry, result.tags)
+
+                session.commit()
+                self._enrichment_retries.pop(entry.id, None)
+
+                time_str = _format_time(entry.created_at)
+                await self._notify(
+                    format_recovery(
+                        f"Your note from {time_str} has been fully processed."
+                    )
+                )
+                logger.info(
+                    "Enrichment retry succeeded for entry %d on attempt %d",
+                    entry.id,
+                    count + 1,
+                )
 
     async def retry_pending_transcriptions(self) -> None:
-        """Find entries with status='pending_transcription' and retry transcription."""
+        """Find entries with status='pending_transcription' and retry.
+
+        Uses stored audio_file_id to re-download from Telegram, then
+        sends to WhisperClient.transcribe().  On success, feeds directly
+        into the enrichment pipeline.  On failure, increments retry count
+        and notifies user on exhaustion.
+        """
         if not self.whisper_client:
             logger.debug("Transcription retry skipped: no whisper client")
             return
 
-        from second_brain.models.entry import Entry
-
-        max_retries = self._get_max_transcription_retries()
+        if not self._bot:
+            logger.debug("Transcription retry skipped: no bot for audio download")
+            return
 
         with self.session_factory() as session:
+            max_retries = get_config_int(session, "transcription_retry_count") or 3
+
             pending = (
                 session.query(Entry)
                 .filter(Entry.status == "pending_transcription")
@@ -179,56 +200,45 @@ class RetryManager:
                 count = self._transcription_retries.get(entry.id, 0)
 
                 if count >= max_retries:
+                    entry.status = "open"
+                    self._transcription_retries.pop(entry.id, None)
+                    session.commit()
+
+                    time_str = _format_time(entry.created_at)
+                    await self._notify(
+                        format_error(
+                            f"I still can't transcribe your voice note from "
+                            f"{time_str}. It's stored as-is."
+                        )
+                    )
                     logger.warning(
                         "Max transcription retries (%d) exhausted for entry %d",
                         max_retries,
                         entry.id,
                     )
-                    entry.status = "open"
-                    self._transcription_retries.pop(entry.id, None)
-                    session.commit()
-
-                    created_str = entry.created_at.strftime("%Y-%m-%d %H:%M")
-                    await self._notify(
-                        format_error(
-                            f"I still can't transcribe your voice note from "
-                            f"{created_str}. Audio is saved for manual review."
-                        )
-                    )
                     continue
 
                 self._transcription_retries[entry.id] = count + 1
 
+                # Step 1: Re-download audio from Telegram
                 try:
-                    # Download audio via stored file_id
-                    audio_bytes = await self._download_audio(entry.audio_file_id)
-                    if audio_bytes is None:
-                        logger.warning(
-                            "Could not re-download audio for entry %d",
-                            entry.id,
-                        )
-                        continue
+                    file = await self._bot.get_file(entry.audio_file_id)
+                    audio_bytes = bytes(await file.download_as_bytearray())
+                except Exception:
+                    logger.warning(
+                        "Audio download retry %d/%d failed for entry %d",
+                        count + 1,
+                        max_retries,
+                        entry.id,
+                    )
+                    continue
 
-                    result = self.whisper_client.transcribe(
+                # Step 2: Transcribe
+                try:
+                    transcription = self.whisper_client.transcribe(
                         audio_file=audio_bytes,
                         filename=f"retry_{entry.id}.ogg",
                     )
-
-                    entry.raw_text = result.text
-                    entry.status = "pending_enrichment"
-                    session.commit()
-
-                    # Clean up retry tracking
-                    self._transcription_retries.pop(entry.id, None)
-
-                    logger.info(
-                        "Transcription retry succeeded for entry %d on attempt %d",
-                        entry.id,
-                        count + 1,
-                    )
-
-                    # Enrichment will be picked up by the next enrichment retry cycle
-
                 except Exception:
                     logger.warning(
                         "Transcription retry %d/%d failed for entry %d",
@@ -236,58 +246,81 @@ class RetryManager:
                         max_retries,
                         entry.id,
                     )
+                    continue
 
-    async def _download_audio(self, file_id: str) -> bytes | None:
-        """Download audio from Telegram using stored file_id.
+                # Step 3: Store raw transcription
+                entry.raw_text = transcription.text
 
-        Requires the bot instance to be available via bot_data.
-        """
-        if not hasattr(self, "_bot") or self._bot is None:
-            logger.debug("Cannot download audio: no bot instance available")
-            return None
+                # Step 4: Feed into enrichment pipeline
+                if self.enrichment_service:
+                    try:
+                        result = self.enrichment_service.enrich_text(
+                            raw_text=transcription.text,
+                        )
+                        entry.clean_text = result.clean_text
+                        entry.entry_type = result.entry_type
+                        entry.is_open_loop = result.is_open_loop
+                        entry.status = "open"
 
-        try:
-            file = await self._bot.get_file(file_id)
-            data = await file.download_as_bytearray()
-            return bytes(data)
-        except Exception:
-            logger.exception("Failed to download audio file %s", file_id)
-            return None
+                        if result.follow_up_date:
+                            try:
+                                entry.follow_up_date = date.fromisoformat(
+                                    result.follow_up_date
+                                )
+                            except ValueError:
+                                pass
 
-    def set_bot(self, bot) -> None:
-        """Set the Telegram bot instance for audio re-downloads.
+                        if result.calendar_event_id:
+                            entry.calendar_event_id = result.calendar_event_id
 
-        Args:
-            bot: The telegram.Bot instance.
-        """
-        self._bot = bot
+                        _store_tags(session, entry, result.tags)
+                        session.commit()
+                    except Exception:
+                        # Transcription succeeded but enrichment failed —
+                        # hand off to enrichment retry
+                        logger.warning(
+                            "Enrichment after transcription retry failed for entry %d, "
+                            "queuing for enrichment retry",
+                            entry.id,
+                        )
+                        entry.status = "pending_enrichment"
+                        session.commit()
+                        self._transcription_retries.pop(entry.id, None)
+                        continue
+                else:
+                    # No enrichment service — queue for enrichment retry
+                    entry.status = "pending_enrichment"
+                    session.commit()
+
+                self._transcription_retries.pop(entry.id, None)
+
+                time_str = _format_time(entry.created_at)
+                await self._notify(
+                    format_recovery(
+                        f"Your voice note from {time_str} has been fully processed."
+                    )
+                )
+                logger.info(
+                    "Transcription retry succeeded for entry %d on attempt %d",
+                    entry.id,
+                    count + 1,
+                )
 
     async def _notify(self, text: str) -> None:
-        """Send a notification to the user via Telegram.
-
-        Requires bot and chat_id to be set.
-        """
-        if not hasattr(self, "_bot") or self._bot is None:
-            logger.info("Retry notification (no bot): %s", text)
-            return
-
-        chat_id = getattr(self, "_chat_id", None)
-        if not chat_id:
-            logger.info("Retry notification (no chat_id): %s", text)
+        """Send a notification to the user via Telegram bot."""
+        if not self._bot or not self._chat_id:
+            logger.info("Retry notification (no bot/chat_id): %s", text)
             return
 
         try:
-            await self._bot.send_message(chat_id=chat_id, text=text)
+            await self._bot.send_message(chat_id=self._chat_id, text=text)
         except Exception:
             logger.exception("Failed to send retry notification")
 
-    def set_chat_id(self, chat_id: int) -> None:
-        """Set the chat ID for notifications.
 
-        Args:
-            chat_id: Telegram chat ID to send notifications to.
-        """
-        self._chat_id = chat_id
+def _format_time(dt: datetime) -> str:
+    """Format a datetime for user-facing messages (e.g. '2:15 PM')."""
+    return dt.strftime("%-I:%M %p")
 
 
 def _store_tags(session, entry, tag_names: list[str]) -> None:
