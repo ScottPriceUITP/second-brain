@@ -18,6 +18,9 @@ from second_brain.models.calendar_event import CalendarEvent
 
 logger = logging.getLogger(__name__)
 
+SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
 
 class CalendarSyncService:
     """Syncs Google Calendar events to the local database.
@@ -30,9 +33,13 @@ class CalendarSyncService:
         self.session_factory = session_factory
         self._credentials = None
         self._service = None
+        self._token_refreshed = False
 
-    def _get_credentials(self):
-        """Build or refresh Google OAuth2 credentials from refresh token.
+    def setup_oauth(self):
+        """Create OAuth2 credentials from environment variables.
+
+        Uses the refresh token from GOOGLE_OAUTH_REFRESH_TOKEN along with
+        GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
 
         Returns:
             google.oauth2.credentials.Credentials instance, or None if
@@ -44,52 +51,60 @@ class CalendarSyncService:
 
         from google.oauth2.credentials import Credentials
 
-        if self._credentials and self._credentials.valid:
-            return self._credentials
-
-        self._credentials = Credentials(
+        credentials = Credentials(
             token=None,
             refresh_token=GOOGLE_OAUTH_REFRESH_TOKEN,
-            token_uri="https://oauth2.googleapis.com/token",
+            token_uri=GOOGLE_TOKEN_URI,
             client_id=GOOGLE_CLIENT_ID,
             client_secret=GOOGLE_CLIENT_SECRET,
-            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            scopes=SCOPES,
         )
+        return credentials
 
-        # Force a refresh to get a valid access token
-        from google.auth.transport.requests import Request
+    def _get_credentials(self):
+        """Get valid credentials, refreshing the token if necessary.
 
-        token_refreshed = not self._credentials.valid
-        self._credentials.refresh(Request())
+        Returns:
+            google.oauth2.credentials.Credentials with a valid access token,
+            or None if credentials cannot be established.
+        """
+        if self._credentials and self._credentials.valid:
+            self._token_refreshed = False
+            return self._credentials
 
-        if token_refreshed:
+        if self._credentials is None:
+            self._credentials = self.setup_oauth()
+            if self._credentials is None:
+                return None
+
+        if not self._credentials.valid:
+            from google.auth.transport.requests import Request
+
+            self._credentials.refresh(Request())
+            self._token_refreshed = True
             logger.info("Google OAuth token refreshed")
+        else:
+            self._token_refreshed = False
 
         return self._credentials
 
     def _get_service(self):
         """Get or create the Google Calendar API service client."""
-        if self._service:
-            return self._service
-
         credentials = self._get_credentials()
         if not credentials:
             return None
+
+        # Rebuild service if credentials were refreshed
+        if self._service and not self._token_refreshed:
+            return self._service
 
         from googleapiclient.discovery import build
 
         self._service = build("calendar", "v3", credentials=credentials)
         return self._service
 
-    async def sync(self, notify_callback=None) -> int:
-        """Sync calendar events for the next 24 hours.
-
-        Pulls events from all configured calendars, upserts into the
-        calendar_events table, and matches attendees to entities.
-
-        Args:
-            notify_callback: Optional async callable(message: str) for sending
-                Telegram notifications (e.g., token refresh notice).
+    def sync_calendars(self) -> int:
+        """Pull next 24 hours of events from configured calendars and upsert locally.
 
         Returns:
             Number of events synced.
@@ -98,13 +113,6 @@ class CalendarSyncService:
         if not service:
             logger.info("Calendar sync skipped: no Google Calendar service")
             return 0
-
-        # Check if token was refreshed and notify user if configured
-        if notify_callback:
-            with self.session_factory() as session:
-                should_notify = get_config_bool(session, "notify_on_token_refresh")
-            if should_notify and self._credentials and self._credentials.token:
-                await notify_callback("Google Calendar token refreshed.")
 
         # Get configured calendar IDs from config
         with self.session_factory() as session:
@@ -151,8 +159,36 @@ class CalendarSyncService:
             except Exception:
                 logger.exception("Failed to sync calendar %s", cal_id)
 
+        return total_synced
+
+    async def sync(self, notify_callback=None) -> int:
+        """Full sync cycle: sync calendars, resolve attendees, notify if needed.
+
+        This is the main entry point called by the scheduler.
+
+        Args:
+            notify_callback: Optional async callable(message: str) for sending
+                Telegram notifications (e.g., token refresh notice).
+
+        Returns:
+            Number of events synced.
+        """
+        total_synced = self.sync_calendars()
+
         # Match attendees to entities
         self._match_attendees_to_entities()
+
+        # Notify on token refresh if configured
+        if self._token_refreshed and notify_callback:
+            with self.session_factory() as session:
+                should_notify = get_config_bool(session, "notify_on_token_refresh")
+            if should_notify:
+                try:
+                    await notify_callback(
+                        "Google Calendar OAuth token was automatically refreshed."
+                    )
+                except Exception:
+                    logger.exception("Failed to send token refresh notification")
 
         logger.info("Calendar sync complete: %d events total", total_synced)
         return total_synced
@@ -180,12 +216,7 @@ class CalendarSyncService:
         ]
 
         # Extract video link
-        video_link = None
-        conference_data = event.get("conferenceData", {})
-        for entry_point in conference_data.get("entryPoints", []):
-            if entry_point.get("entryPointType") == "video":
-                video_link = entry_point.get("uri")
-                break
+        video_link = self._extract_video_link(event)
 
         # Check if event already exists
         existing = session.get(CalendarEvent, event_id)
@@ -234,6 +265,36 @@ class CalendarSyncService:
         except ValueError:
             logger.warning("Could not parse event time: %s", time_str)
             return None
+
+    @staticmethod
+    def _extract_video_link(event_data: dict) -> str | None:
+        """Extract a video conference link from event data.
+
+        Checks conferenceData first (Google Meet), then falls back to
+        scanning the description for Zoom/Teams/Meet URLs.
+        """
+        conference_data = event_data.get("conferenceData", {})
+        for entry_point in conference_data.get("entryPoints", []):
+            if entry_point.get("entryPointType") == "video":
+                return entry_point.get("uri")
+
+        # Fallback: scan description for video URLs
+        description = event_data.get("description", "") or ""
+        for prefix in [
+            "https://meet.google.com/",
+            "https://zoom.us/",
+            "https://teams.microsoft.com/",
+        ]:
+            idx = description.find(prefix)
+            if idx != -1:
+                end = len(description)
+                for ch in (" ", "\n", "\r", '"', "'", "<"):
+                    pos = description.find(ch, idx)
+                    if pos != -1 and pos < end:
+                        end = pos
+                return description[idx:end]
+
+        return None
 
     def _match_attendees_to_entities(self) -> None:
         """Match calendar attendees to existing person entities.
@@ -323,13 +384,13 @@ class CalendarSyncService:
             minutes_ahead: Look-ahead window in minutes.
 
         Returns:
-            List of CalendarEvent records.
+            List of CalendarEvent records (detached from session).
         """
         now = datetime.now(timezone.utc)
         cutoff = now + timedelta(minutes=minutes_ahead)
 
         with self.session_factory() as session:
-            return (
+            events = (
                 session.query(CalendarEvent)
                 .filter(
                     CalendarEvent.start_time >= now,
@@ -338,6 +399,8 @@ class CalendarSyncService:
                 .order_by(CalendarEvent.start_time)
                 .all()
             )
+            session.expunge_all()
+            return events
 
     def get_recent_events(self, hours_back: int = 4) -> list[CalendarEvent]:
         """Get events from the recent past for enrichment context.
@@ -346,13 +409,13 @@ class CalendarSyncService:
             hours_back: How many hours back to look.
 
         Returns:
-            List of CalendarEvent records.
+            List of CalendarEvent records (detached from session).
         """
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=hours_back)
 
         with self.session_factory() as session:
-            return (
+            events = (
                 session.query(CalendarEvent)
                 .filter(
                     CalendarEvent.start_time >= cutoff,
@@ -361,6 +424,8 @@ class CalendarSyncService:
                 .order_by(CalendarEvent.start_time.desc())
                 .all()
             )
+            session.expunge_all()
+            return events
 
 
 # Common email providers that should not be treated as companies
