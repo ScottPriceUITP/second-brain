@@ -61,6 +61,7 @@ async def handle_text_message(
 
     # Step 2: Enrich
     try:
+        # Fetch recent calendar events for context
         calendar_events = _get_recent_calendar_events(session_factory)
 
         enrichment_result = enrichment_service.enrich_text(
@@ -112,12 +113,12 @@ async def handle_text_message(
             # Store tags
             _store_tags(session, entry, enrichment_result.tags)
 
-            # Resolve entities
+            # Resolve entities (creates service with current session)
             resolved = _resolve_entities(
                 context, session, entry, enrichment_result.entities
             )
 
-            # Score connections
+            # Score connections (creates service with current session)
             strong_connections = _score_connections(context, session, entry)
 
             session.commit()
@@ -165,6 +166,7 @@ async def _handle_query(
 
     if not query_engine:
         await update.message.reply_text("Query system not available.")
+        # Mark entry as a query that couldn't be processed
         from second_brain.models.entry import Entry
 
         with session_factory() as session:
@@ -251,16 +253,23 @@ def _store_tags(session, entry, tag_names: list[str]) -> None:
 
 
 def _resolve_entities(context, session, entry, extracted_entities):
-    """Resolve extracted entities via EntityResolutionService and link to entry."""
-    entity_resolution = context.bot_data.get("entity_resolution")
-    if not entity_resolution or not extracted_entities:
+    """Resolve extracted entities via EntityResolutionService and link to entry.
+
+    Creates a per-request EntityResolutionService with the current session
+    so that entity creation and linking happen within the same transaction.
+    """
+    if not extracted_entities:
         return None
 
     try:
+        from second_brain.services.entity_resolution import EntityResolutionService
+
+        service = EntityResolutionService(session=session)
+
         entity_dicts = [
             {"name": e.name, "type": e.type} for e in extracted_entities
         ]
-        resolved = entity_resolution.resolve_entities(
+        resolved = service.resolve_entities(
             extracted_entities=entity_dicts,
         )
 
@@ -284,13 +293,20 @@ def _resolve_entities(context, session, entry, extracted_entities):
 
 
 def _score_connections(context, session, entry):
-    """Score connections between this entry and existing entries."""
-    connection_scoring = context.bot_data.get("connection_scoring")
-    if not connection_scoring:
+    """Score connections between this entry and existing entries.
+
+    Creates a per-request ConnectionScoringService with the current session
+    so that relation creation happens within the same transaction.
+    """
+    anthropic_client = context.bot_data.get("anthropic_client")
+    if not anthropic_client:
         return []
 
     try:
-        return connection_scoring.score_connections(entry=entry)
+        from second_brain.services.connection_scoring import ConnectionScoringService
+
+        service = ConnectionScoringService(client=anthropic_client, session=session)
+        return service.score_connections(entry=entry)
     except Exception:
         logger.exception("Connection scoring failed for entry %d", entry.id)
         return []
@@ -307,6 +323,7 @@ async def _send_disambiguation_prompts(message, entry_id, ambiguous_entities):
                     callback_data=f"entity:{entry_id}:{entity_id}",
                 )
             )
+        # Add a "Create new" button
         buttons.append(
             InlineKeyboardButton(
                 f"New: {amb.extracted_name}",
