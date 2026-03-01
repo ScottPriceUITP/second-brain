@@ -156,6 +156,21 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: nudge_manager")
 
+    # Retry manager
+    try:
+        from second_brain.services.retry_manager import RetryManager
+
+        services["retry_manager"] = RetryManager(
+            session_factory=session_factory,
+            enrichment_service=services.get("enrichment"),
+            whisper_client=services.get("whisper_client"),
+        )
+        logger.info("Service loaded: retry_manager")
+    except ImportError:
+        logger.info("Service not available (skipped): retry_manager")
+    except Exception:
+        logger.exception("Service failed to load: retry_manager")
+
     # Scheduler
     try:
         from second_brain.services.scheduler import SchedulerService
