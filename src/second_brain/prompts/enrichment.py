@@ -118,7 +118,8 @@ class EnrichmentResult(BaseModel):
         description="Cleaned/punctuated version of the raw text."
     )
     entry_type: str = Field(
-        description="Entry type: task, idea, meeting_note, project_context, or personal."
+        default="personal",
+        description="Entry type: task, idea, meeting_note, project_context, or personal.",
     )
     entities: list[ExtractedEntity] = Field(
         default_factory=list,

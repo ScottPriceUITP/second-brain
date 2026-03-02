@@ -10,7 +10,6 @@ from datetime import timedelta
 from sqlalchemy.orm import sessionmaker
 
 from second_brain.models.entry import Entry
-from second_brain.models.nudge import NudgeHistory
 from second_brain.prompts.pattern_detection import (
     PATTERN_DETECTION_SYSTEM_PROMPT,
     PatternDetectionResult,
@@ -60,9 +59,6 @@ class PatternDetectionService:
             len(result.patterns),
         )
 
-        if result.patterns:
-            self._record_nudge_history(result.patterns)
-
         return result.patterns
 
     def _fetch_recent_entries(self) -> list[dict]:
@@ -99,26 +95,3 @@ class PatternDetectionService:
 
         return entries_data
 
-    def _record_nudge_history(self, patterns: list[PatternInsight]) -> None:
-        """Create nudge_history records for delivered pattern insights.
-
-        Args:
-            patterns: The pattern insights to record.
-        """
-        with self.session_factory() as session:
-            for pattern in patterns:
-                nudge = NudgeHistory(
-                    entry_id=None,  # Pattern nudges span multiple entries
-                    nudge_type="pattern_insight",
-                    message_text=pattern.insight_text,
-                    escalation_level=1,
-                    sent_at=utc_now(),
-                )
-                session.add(nudge)
-
-            session.commit()
-
-            logger.info(
-                "Recorded %d pattern insight nudge(s) in nudge_history.",
-                len(patterns),
-            )

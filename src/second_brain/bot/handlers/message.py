@@ -1,10 +1,7 @@
-"""Text message handler — receives text from Telegram, enriches, and stores entries."""
+"""Text message handler -- receives text from Slack, enriches, and stores entries."""
 
 import logging
 from datetime import date
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes, MessageHandler, filters
 
 from second_brain.bot.formatting import (
     format_capture_confirmation,
@@ -22,9 +19,7 @@ from second_brain.utils.time import utc_now
 logger = logging.getLogger(__name__)
 
 
-async def handle_text_message(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def handle_text_message(event, say, context):
     """Handle an incoming text message through the capture/query pipeline.
 
     Flow:
@@ -34,17 +29,27 @@ async def handle_text_message(
     4. For captures: resolve entities, score connections, confirm
     5. On failure: keep pending_enrichment, notify user
     """
-    message = update.message
-    if not message or not message.text:
+    # Filter out messages with subtypes (edits, bot messages, joins, etc.)
+    if event.get("subtype") is not None:
         return
 
-    raw_text = message.text
-    session_factory = context.bot_data.get("db_session_factory")
-    enrichment_service = context.bot_data.get("enrichment")
+    # Skip threaded replies — those are handled by nudge_reply_handler in callbacks.py
+    if event.get("thread_ts"):
+        return
+
+    raw_text = event.get("text", "")
+    if not raw_text:
+        return
+
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
+    enrichment_service = services.get("enrichment")
 
     if not session_factory:
-        await message.reply_text(format_error("Database not available."))
+        await say(text=format_error("Database not available."))
         return
+
+    platform_message_id = event.get("ts")
 
     # Step 1: Store entry with pending_enrichment status
     from second_brain.models.entry import Entry
@@ -52,9 +57,9 @@ async def handle_text_message(
     with session_factory() as session:
         entry = Entry(
             raw_text=raw_text,
-            source="telegram_text",
+            source="slack_text",
             status="pending_enrichment",
-            telegram_message_id=message.message_id,
+            platform_message_id=platform_message_id,
             created_at=utc_now(),
             updated_at=utc_now(),
         )
@@ -63,12 +68,11 @@ async def handle_text_message(
         entry_id = entry.id
 
     if not enrichment_service:
-        await message.reply_text(format_error("Enrichment service not available."))
+        await say(text=format_error("Enrichment service not available."))
         return
 
     # Step 2: Enrich
     try:
-        # Fetch recent calendar events for context
         calendar_events = get_recent_calendar_events(session_factory)
 
         enrichment_result = enrichment_service.enrich_text(
@@ -77,17 +81,17 @@ async def handle_text_message(
         )
     except Exception:
         logger.exception("Enrichment failed for entry %d", entry_id)
-        await message.reply_text(
-            format_error("Could not process your message. It has been saved and will be retried.")
+        await say(
+            text=format_error("Could not process your message. It has been saved and will be retried.")
         )
         return
 
     # Step 3: Route based on intent
     if enrichment_result.intent == "query":
-        await _handle_query(update, context, raw_text, entry_id, session_factory)
+        await _handle_query(say, context, raw_text, entry_id, session_factory)
         return
 
-    # Step 4: Capture — update entry with enrichment results
+    # Step 4: Capture -- update entry with enrichment results
     try:
         resolved = None
         strong_connections = []
@@ -126,7 +130,7 @@ async def handle_text_message(
             )
 
             # Score connections (creates service with current session)
-            anthropic_client = context.bot_data.get("anthropic_client")
+            anthropic_client = services.get("anthropic_client")
             strong_connections = score_connections(anthropic_client, session, entry)
 
             # Extract connection previews while session is still open
@@ -149,30 +153,25 @@ async def handle_text_message(
         # Send entity disambiguation prompts if any
         if resolved and resolved.ambiguous:
             await _send_disambiguation_prompts(
-                message, entry_id, resolved.ambiguous
+                say, entry_id, resolved.ambiguous
             )
 
-        await message.reply_text(confirmation)
+        await say(text=confirmation)
 
     except Exception:
         logger.exception("Failed to store enrichment results for entry %d", entry_id)
-        await message.reply_text(
-            format_error("Could not process your message. It has been saved and will be retried.")
+        await say(
+            text=format_error("Could not process your message. It has been saved and will be retried.")
         )
 
 
-async def _handle_query(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    raw_text: str,
-    entry_id: int,
-    session_factory,
-) -> None:
+async def _handle_query(say, context, raw_text, entry_id, session_factory):
     """Route a query-intent message to the query engine."""
-    query_engine = context.bot_data.get("query_engine")
+    services = context.get("services", {})
+    query_engine = services.get("query_engine")
 
     if not query_engine:
-        await update.message.reply_text("Query system not available.")
+        await say(text="Query system not available.")
         # Mark entry as a query that couldn't be processed
         from second_brain.models.entry import Entry
 
@@ -186,7 +185,7 @@ async def _handle_query(
         return
 
     try:
-        session_manager = context.bot_data.get("query_session_manager")
+        session_manager = services.get("query_session_manager")
         session_ctx = None
         if session_manager:
             session_ctx = session_manager.session
@@ -214,46 +213,65 @@ async def _handle_query(
             for s in result.sources
         ]
         response_text = format_query_response(result.answer, sources)
-        await update.message.reply_text(response_text)
+        await say(text=response_text)
     except Exception:
         logger.exception("Query engine failed for entry %d", entry_id)
-        await update.message.reply_text(
-            format_error("Could not process your query. Please try again.")
+        await say(
+            text=format_error("Could not process your query. Please try again.")
         )
 
 
-async def _send_disambiguation_prompts(message, entry_id, ambiguous_entities):
-    """Send inline keyboard prompts for ambiguous entity matches."""
+async def _send_disambiguation_prompts(say, entry_id, ambiguous_entities):
+    """Send Block Kit action prompts for ambiguous entity matches."""
     for amb in ambiguous_entities:
         buttons = []
         for entity_id, entity_name, score in amb.candidates[:3]:
             buttons.append(
-                InlineKeyboardButton(
-                    f"{entity_name} ({score:.0%})",
-                    callback_data=f"entity:{entry_id}:{entity_id}",
-                )
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{entity_name} ({score:.0%})",
+                    },
+                    "action_id": f"entity_select:{entry_id}:{entity_id}",
+                    "value": f"{entity_id}",
+                }
             )
         # Add a "Create new" button
+        # Slack limits action_id to 255 chars; truncate name to fit
+        new_action_prefix = f"entity_new:{entry_id}:"
+        new_action_suffix = f":{amb.extracted_type}"
+        max_name_len = 255 - len(new_action_prefix) - len(new_action_suffix)
+        truncated_name = amb.extracted_name[:max_name_len]
+        display_name = amb.extracted_name[:30] + "..." if len(amb.extracted_name) > 30 else amb.extracted_name
         buttons.append(
-            InlineKeyboardButton(
-                f"New: {amb.extracted_name}",
-                callback_data=f"entity:{entry_id}:new:{amb.extracted_name}:{amb.extracted_type}",
-            )
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"New: {display_name}",
+                },
+                "action_id": f"{new_action_prefix}{truncated_name}{new_action_suffix}",
+                "value": "new",
+            }
         )
 
-        keyboard = InlineKeyboardMarkup([buttons])
-        await message.reply_text(
-            f"Who is '{amb.extracted_name}'?",
-            reply_markup=keyboard,
-        )
+        name = amb.extracted_name
+        blocks = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"Who is '{name}'?"},
+            },
+            {"type": "actions", "elements": buttons},
+        ]
+        await say(text=f"Who is '{name}'?", blocks=blocks)
 
 
-def register(application) -> None:
-    """Register the text message handler."""
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_text_message,
-        )
-    )
+def register(app) -> None:
+    """Register the text message handler on the Slack Bolt AsyncApp."""
+
+    @app.event("message")
+    async def _message_listener(event, say, context):
+        await handle_text_message(event, say, context)
+
     logger.info("Text message handler registered")

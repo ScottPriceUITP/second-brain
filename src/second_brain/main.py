@@ -1,16 +1,17 @@
 """Entry point for Second Brain bot.
 
 Loads config, creates DB engine, runs migrations, builds services,
-creates bot application, and starts polling.
+creates Slack Bolt app, and starts Socket Mode.
 """
 
+import asyncio
 import logging
 import os
 import subprocess
 import sys
 
-from second_brain.bot.app import create_application
-from second_brain.config import ANTHROPIC_API_KEY, OPENAI_API_KEY, TELEGRAM_BOT_TOKEN
+from second_brain.bot.app import create_app
+from second_brain.config import ANTHROPIC_API_KEY, SLACK_APP_TOKEN, SLACK_BOT_TOKEN
 from second_brain.logging_setup import setup_logging
 from second_brain.models.base import create_db_engine, create_session_factory
 
@@ -60,20 +61,6 @@ def build_services(session_factory) -> dict:
             logger.info("Service not available (skipped): anthropic_client")
     else:
         logger.info("Service skipped (no API key): anthropic_client")
-
-    # Whisper / OpenAI client
-    if OPENAI_API_KEY:
-        try:
-            from second_brain.services.whisper_client import WhisperClient
-
-            services["whisper_client"] = WhisperClient(api_key=OPENAI_API_KEY)
-            logger.info("Service loaded: whisper_client")
-        except ImportError:
-            logger.info("Service not available (skipped): whisper_client")
-        except Exception:
-            logger.exception("Service failed to load: whisper_client")
-    else:
-        logger.info("Service skipped (no API key): whisper_client")
 
     # Enrichment service
     try:
@@ -160,7 +147,6 @@ def build_services(session_factory) -> dict:
         services["retry_manager"] = RetryManager(
             session_factory=session_factory,
             enrichment_service=services.get("enrichment"),
-            whisper_client=services.get("whisper_client"),
         )
         logger.info("Service loaded: retry_manager")
     except ImportError:
@@ -219,9 +205,12 @@ def main() -> None:
 
     logger.info("Starting Second Brain bot...")
 
-    # Validate required env var
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN is not set. Exiting.")
+    # Validate required env vars
+    if not SLACK_BOT_TOKEN:
+        logger.error("SLACK_BOT_TOKEN is not set. Exiting.")
+        sys.exit(1)
+    if not SLACK_APP_TOKEN:
+        logger.error("SLACK_APP_TOKEN is not set. Exiting.")
         sys.exit(1)
 
     # Create DB engine and session factory
@@ -242,19 +231,29 @@ def main() -> None:
     services = build_services(session_factory)
     logger.info("Services built: %s", list(services.keys()))
 
-    # Create and run bot
-    application = create_application(
-        token=TELEGRAM_BOT_TOKEN,
+    # Create Slack Bolt app
+    app = create_app(
+        bot_token=SLACK_BOT_TOKEN,
         services=services,
     )
 
-    # Start the scheduler (registers APScheduler jobs)
-    scheduler = services.get("scheduler")
-    if scheduler:
-        scheduler.setup_scheduler(application.bot_data)
+    # Inject Slack-specific references into services
+    services["slack_client"] = app.client
+    services["channel_id"] = os.environ.get("SLACK_CHANNEL_ID", "")
 
-    logger.info("Starting Telegram polling...")
-    application.run_polling()
+    # Start Socket Mode
+    from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+
+    async def _start() -> None:
+        # Both AsyncSocketModeHandler and APScheduler require a running event loop
+        handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
+        scheduler = services.get("scheduler")
+        if scheduler:
+            scheduler.setup_scheduler(services)
+        logger.info("Starting Slack Socket Mode...")
+        await handler.start_async()
+
+    asyncio.run(_start())
 
 
 if __name__ == "__main__":

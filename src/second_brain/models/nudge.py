@@ -20,7 +20,7 @@ class NudgeHistory(Base):
         Text, nullable=False
     )  # open_loop/timely_connection/pattern_insight
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
-    telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    platform_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: utc_now(), nullable=False
     )

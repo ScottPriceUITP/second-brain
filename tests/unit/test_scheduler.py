@@ -237,7 +237,7 @@ class TestFormattingHelpers:
             entry = Entry(
                 raw_text="Follow up with client about contract",
                 clean_text="Follow up with client about contract",
-                source="telegram_text",
+                source="slack_text",
                 status="open",
                 is_open_loop=True,
                 created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),

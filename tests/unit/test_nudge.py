@@ -57,7 +57,7 @@ def _add_entry(sf, **kwargs) -> int:
     """Create an entry and return its ID (avoids detached instance issues)."""
     defaults = {
         "raw_text": "Follow up with client",
-        "source": "telegram_text",
+        "source": "slack_text",
         "status": "open",
         "is_open_loop": True,
         "created_at": _utcnow(),
@@ -141,19 +141,31 @@ class TestCreateNudge:
         )
         assert "[ACTION NEEDED]" in formatted
 
-    def test_returns_inline_keyboard(self, manager, sf):
-        nudge_id, _, keyboard = manager.create_nudge(
+    def test_returns_block_kit_blocks(self, manager, sf):
+        nudge_id, _, blocks = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Test nudge",
         )
-        assert len(keyboard) == 1
-        assert len(keyboard[0]) == 3
-        texts = [btn["text"] for btn in keyboard[0]]
+        # blocks should be a list of Block Kit block dicts
+        assert isinstance(blocks, list)
+        assert len(blocks) >= 2  # at least a section + actions block
+
+        # Find the actions block
+        actions_block = [b for b in blocks if b.get("type") == "actions"]
+        assert len(actions_block) == 1
+        elements = actions_block[0]["elements"]
+        assert len(elements) == 3
+
+        texts = [el["text"]["text"] for el in elements]
         assert texts == ["Done", "Snooze", "Drop"]
-        assert f"nudge:done:{nudge_id}" == keyboard[0][0]["callback_data"]
-        assert f"nudge:snooze:{nudge_id}" == keyboard[0][1]["callback_data"]
-        assert f"nudge:drop:{nudge_id}" == keyboard[0][2]["callback_data"]
+
+        action_ids = [el["action_id"] for el in elements]
+        assert action_ids == ["nudge_done", "nudge_snooze", "nudge_drop"]
+
+        # All buttons should reference the nudge_id in their value
+        for el in elements:
+            assert el["value"] == str(nudge_id)
 
 
 class TestHandleNudgeAction:
@@ -588,18 +600,18 @@ class TestGetSnoozedDue:
         assert len(result) == 1
 
 
-class TestSetTelegramMessageId:
-    def test_sets_telegram_message_id(self, manager, sf):
+class TestSetPlatformMessageId:
+    def test_sets_platform_message_id(self, manager, sf):
         nudge_id, _, _ = manager.create_nudge(
             entry_id=None,
             nudge_type="open_loop",
             message="Test",
         )
-        manager.set_telegram_message_id(nudge_id, 99999)
+        manager.set_platform_message_id(nudge_id, "1234567890.99999")
 
         with sf() as session:
             db_nudge = session.get(NudgeHistory, nudge_id)
-            assert db_nudge.telegram_message_id == 99999
+            assert db_nudge.platform_message_id == "1234567890.99999"
 
     def test_nonexistent_nudge_no_error(self, manager, sf):
-        manager.set_telegram_message_id(9999, 12345)
+        manager.set_platform_message_id(9999, "1234567890.12345")

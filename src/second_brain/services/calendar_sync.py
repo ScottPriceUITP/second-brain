@@ -169,7 +169,7 @@ class CalendarSyncService:
 
         Args:
             notify_callback: Optional async callable(message: str) for sending
-                Telegram notifications (e.g., token refresh notice).
+                Slack notifications (e.g., token refresh notice).
 
         Returns:
             Number of events synced.

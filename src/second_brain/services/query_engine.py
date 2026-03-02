@@ -122,8 +122,12 @@ class QueryEngine:
                 query_text, context_entries, session_context
             )
 
-            # 4. Build source lookup for attribution
-            entry_map = {e.id: e for e in context_entries}
+            # 4. Build source lookup for attribution (inside session to avoid detached access)
+            entry_map = {}
+            for e in context_entries:
+                snippet = (e.clean_text or e.raw_text or "")[:120]
+                date_str = e.created_at.strftime("%Y-%m-%d")
+                entry_map[e.id] = {"snippet": snippet, "date": date_str}
 
         # 5. Route to appropriate model
         if complexity == "synthesis":
@@ -144,11 +148,9 @@ class QueryEngine:
         # 6. Build response with source attribution
         sources = []
         for eid in raw.source_entry_ids:
-            entry = entry_map.get(eid)
-            if entry:
-                snippet = (entry.clean_text or entry.raw_text or "")[:120]
-                date_str = entry.created_at.strftime("%Y-%m-%d")
-                sources.append(QuerySource(entry_id=eid, date=date_str, snippet=snippet))
+            data = entry_map.get(eid)
+            if data:
+                sources.append(QuerySource(entry_id=eid, date=data["date"], snippet=data["snippet"]))
 
         logger.info(
             "Query answered | model=%s | sources=%d | query=%s",

@@ -1,6 +1,5 @@
 """Environment variable reader and config table accessor."""
 
-import json
 import logging
 import os
 from sqlalchemy import text
@@ -10,9 +9,9 @@ from second_brain.utils.time import utc_now
 logger = logging.getLogger(__name__)
 
 # Required environment variables (secrets only)
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
+SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GOOGLE_OAUTH_REFRESH_TOKEN = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", "")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -35,8 +34,6 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "enrichment_retry_count": "3",
     "enrichment_retry_interval_minutes": "10",
     "escalation_check_interval_minutes": "15",
-    "transcription_retry_count": "3",
-    "transcription_retry_interval_minutes": "10",
     "notify_on_token_refresh": "true",
 }
 

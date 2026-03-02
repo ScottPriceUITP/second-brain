@@ -1,9 +1,6 @@
-"""Telegram command handlers for /ask, /note, /config, /status, /open, /search."""
+"""Slack slash-command handlers for /ask, /note, /config, /bot-status, /open-loops, /search-entries."""
 
 import logging
-
-from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes
 
 from second_brain.bot.formatting import (
     format_capture_confirmation,
@@ -20,22 +17,22 @@ from second_brain.utils.time import utc_now
 logger = logging.getLogger(__name__)
 
 
-async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/ask <question> — force query mode, bypass intent detection."""
-    if not update.message:
-        return
+async def ask_command(ack, command, say, context):
+    """/ask <question> -- force query mode, bypass intent detection."""
+    await ack()
 
-    question = " ".join(context.args) if context.args else ""
+    question = (command.get("text") or "").strip()
     if not question:
-        await update.message.reply_text("Usage: /ask <question>")
+        await say(text="Usage: /ask <question>")
         return
 
-    query_engine = context.bot_data.get("query_engine")
+    services = context.get("services", {})
+    query_engine = services.get("query_engine")
     if not query_engine:
-        await update.message.reply_text("Query system not yet available.")
+        await say(text="Query system not yet available.")
         return
 
-    session_manager = context.bot_data.get("query_session_manager")
+    session_manager = services.get("query_session_manager")
     session_ctx = None
     if session_manager:
         session_ctx = session_manager.session
@@ -54,31 +51,31 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             for s in result.sources
         ]
         formatted = format_query_response(result.answer, sources)
-        await update.message.reply_text(formatted)
+        await say(text=formatted)
 
     except Exception:
         logger.exception("Error handling /ask command")
-        await update.message.reply_text("An error occurred while processing your query.")
+        await say(text="An error occurred while processing your query.")
 
 
-async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/note <text> — force capture mode, bypass intent detection."""
-    if not update.message:
-        return
+async def note_command(ack, command, say, context):
+    """/note <text> -- force capture mode, bypass intent detection."""
+    await ack()
 
-    text = " ".join(context.args) if context.args else ""
+    text = (command.get("text") or "").strip()
     if not text:
-        await update.message.reply_text("Usage: /note <text>")
+        await say(text="Usage: /note <text>")
         return
 
-    enrichment = context.bot_data.get("enrichment")
+    services = context.get("services", {})
+    enrichment = services.get("enrichment")
     if not enrichment:
-        await update.message.reply_text("Enrichment service not yet available.")
+        await say(text="Enrichment service not yet available.")
         return
 
-    session_factory = context.bot_data.get("db_session_factory")
+    session_factory = services.get("db_session_factory")
     if not session_factory:
-        await update.message.reply_text("Database not available.")
+        await say(text="Database not available.")
         return
 
     try:
@@ -88,9 +85,9 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         with session_factory() as session:
             entry = Entry(
                 raw_text=text,
-                source="telegram_text",
+                source="slack_text",
                 status="pending_enrichment",
-                telegram_message_id=update.message.message_id,
+                platform_message_id=None,
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )
@@ -137,47 +134,46 @@ async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             resolve_entities(session, entry, result.entities)
 
             # Score connections
-            anthropic_client = context.bot_data.get("anthropic_client")
+            anthropic_client = services.get("anthropic_client")
             score_connections(anthropic_client, session, entry)
 
             session.commit()
 
             confirmation = format_capture_confirmation(result.entry_type)
-            await update.message.reply_text(confirmation)
+            await say(text=confirmation)
 
     except Exception:
         logger.exception("Error handling /note command")
-        await update.message.reply_text("An error occurred while saving your note.")
+        await say(text="An error occurred while saving your note.")
 
 
-async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/config — show or set config values."""
-    if not update.message:
-        return
+async def config_command(ack, command, say, context):
+    """/config -- show or set config values."""
+    await ack()
 
-    session_factory = context.bot_data.get("db_session_factory")
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
     if not session_factory:
-        await update.message.reply_text("Database not available.")
+        await say(text="Database not available.")
         return
 
     from second_brain.config import CONFIG_DEFAULTS, get_config, set_config
 
-    args = context.args or []
+    args_text = (command.get("text") or "").strip()
 
     # If an argument is provided in key=value format, update the setting
-    if args and "=" in args[0]:
-        key_value = " ".join(args)
-        eq_idx = key_value.index("=")
-        key = key_value[:eq_idx].strip()
-        value = key_value[eq_idx + 1 :].strip()
+    if args_text and "=" in args_text:
+        eq_idx = args_text.index("=")
+        key = args_text[:eq_idx].strip()
+        value = args_text[eq_idx + 1:].strip()
 
         if key not in CONFIG_DEFAULTS:
-            await update.message.reply_text(f"Unknown config key: {key}")
+            await say(text=f"Unknown config key: {key}")
             return
 
         with session_factory() as session:
             set_config(session, key, value)
-        await update.message.reply_text(f"Config updated: {key} = {value}")
+        await say(text=f"Config updated: {key} = {value}")
         return
 
     # Otherwise show all config values
@@ -188,17 +184,17 @@ async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lines.append(f"  {key} = {current}")
 
     header = "Current configuration:\n"
-    await update.message.reply_text(header + "\n".join(lines))
+    await say(text=header + "\n".join(lines))
 
 
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/status — system health: pending counts, last scheduler run, API status."""
-    if not update.message:
-        return
+async def status_command(ack, command, say, context):
+    """/status -- system health: pending counts, last scheduler run, API status."""
+    await ack()
 
-    session_factory = context.bot_data.get("db_session_factory")
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
     if not session_factory:
-        await update.message.reply_text("Database not available.")
+        await say(text="Database not available.")
         return
 
     from second_brain.models.entry import Entry
@@ -214,14 +210,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         lines.append(f"  Pending enrichment: {pending_enrichment}")
 
-        # Pending transcription count
-        pending_transcription = (
-            session.query(Entry)
-            .filter(Entry.status == "pending_transcription")
-            .count()
-        )
-        lines.append(f"  Pending transcription: {pending_transcription}")
-
         # Total entries
         total = session.query(Entry).count()
         lines.append(f"  Total entries: {total}")
@@ -235,30 +223,30 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"  Open loops: {open_loops}")
 
     # Scheduler info
-    scheduler = context.bot_data.get("scheduler")
+    scheduler = services.get("scheduler")
     if scheduler and hasattr(scheduler, "scheduler") and scheduler.scheduler.running:
         lines.append("  Scheduler: running")
     else:
         lines.append("  Scheduler: not running")
 
     # API connectivity check
-    anthropic_client = context.bot_data.get("anthropic_client")
+    anthropic_client = services.get("anthropic_client")
     if anthropic_client:
         lines.append("  Anthropic API: configured")
     else:
         lines.append("  Anthropic API: not configured")
 
-    await update.message.reply_text("\n".join(lines))
+    await say(text="\n".join(lines))
 
 
-async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/open — list current open loops."""
-    if not update.message:
-        return
+async def open_command(ack, command, say, context):
+    """/open -- list current open loops."""
+    await ack()
 
-    session_factory = context.bot_data.get("db_session_factory")
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
     if not session_factory:
-        await update.message.reply_text("Database not available.")
+        await say(text="Database not available.")
         return
 
     from second_brain.models.entry import Entry
@@ -273,7 +261,7 @@ async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
         if not open_entries:
-            await update.message.reply_text("No open loops.")
+            await say(text="No open loops.")
             return
 
         lines = [f"Open loops ({len(open_entries)}):"]
@@ -288,22 +276,22 @@ async def open_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 line += f"\n  Follow-up: {entry.follow_up_date.isoformat()}"
             lines.append(line)
 
-    await update.message.reply_text("\n".join(lines))
+    await say(text="\n".join(lines))
 
 
-async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/search <term> — explicit FTS search."""
-    if not update.message:
-        return
+async def search_command(ack, command, say, context):
+    """/search <term> -- explicit FTS search."""
+    await ack()
 
-    term = " ".join(context.args) if context.args else ""
+    term = (command.get("text") or "").strip()
     if not term:
-        await update.message.reply_text("Usage: /search <term>")
+        await say(text="Usage: /search <term>")
         return
 
-    session_factory = context.bot_data.get("db_session_factory")
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
     if not session_factory:
-        await update.message.reply_text("Database not available.")
+        await say(text="Database not available.")
         return
 
     from second_brain.utils.fts import fts_search
@@ -312,7 +300,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         results = fts_search(session, term, limit=10)
 
         if not results:
-            await update.message.reply_text(f"No results for: {term}")
+            await say(text=f"No results for: {term}")
             return
 
         lines = [f"Search results for '{term}' ({len(results)}):"]
@@ -324,15 +312,15 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             date_str = entry.created_at.strftime("%Y-%m-%d")
             lines.append(f"\n[{date_str}, {entry.entry_type}] {snippet}")
 
-    await update.message.reply_text("\n".join(lines))
+    await say(text="\n".join(lines))
 
 
-def register(application) -> None:
-    """Register all command handlers."""
-    application.add_handler(CommandHandler("ask", ask_command))
-    application.add_handler(CommandHandler("note", note_command))
-    application.add_handler(CommandHandler("config", config_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("open", open_command))
-    application.add_handler(CommandHandler("search", search_command))
+def register(app) -> None:
+    """Register all slash-command handlers on the Slack Bolt AsyncApp."""
+    app.command("/ask")(ask_command)
+    app.command("/note")(note_command)
+    app.command("/config")(config_command)
+    app.command("/bot-status")(status_command)
+    app.command("/open-loops")(open_command)
+    app.command("/search-entries")(search_command)
     logger.info("Command handlers registered")

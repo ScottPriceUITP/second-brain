@@ -48,9 +48,7 @@ def engine():
             "query_max_entries": "30",
             "nudge_escalation_days": "3",
             "enrichment_retry_count": "3",
-            "transcription_retry_count": "3",
             "enrichment_retry_interval_minutes": "10",
-            "transcription_retry_interval_minutes": "10",
         }.items():
             conn.execute(text(
                 "INSERT INTO config (key, value, updated_at) "
@@ -85,57 +83,47 @@ def mock_anthropic_client():
 
 
 @pytest.fixture
-def mock_whisper_client():
-    """Mock WhisperClient that returns configurable transcriptions."""
-    from second_brain.services.whisper_client import TranscriptionResult
+def slack_event():
+    """Mock Slack message event dict."""
+    return {
+        "type": "message",
+        "text": "Test message",
+        "channel": "C123456",
+        "ts": "1234567890.123456",
+        "user": "U123456",
+    }
 
-    client = MagicMock()
-    client.transcribe = MagicMock(return_value=TranscriptionResult(
-        text="Test transcription",
-        confidence=0.95,
-        language="en",
-    ))
+
+@pytest.fixture
+def mock_say():
+    """Mock Slack say() function."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_ack():
+    """Mock Slack ack() function."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_client():
+    """Mock Slack WebClient."""
+    client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "1234567890.789012"}
+    client.chat_update.return_value = {"ok": True}
+    client.views_open.return_value = {"ok": True}
     return client
 
 
 @pytest.fixture
-def mock_update():
-    """Mock Telegram Update object."""
-    update = MagicMock()
-    update.message = MagicMock()
-    update.message.text = "Test message"
-    update.message.message_id = 12345
-    update.message.reply_text = AsyncMock()
-    update.message.voice = None
-    return update
-
-
-@pytest.fixture
-def mock_voice_update():
-    """Mock Telegram Update with voice message."""
-    update = MagicMock()
-    update.message = MagicMock()
-    update.message.text = None
-    update.message.message_id = 12346
-    update.message.reply_text = AsyncMock()
-    voice = MagicMock()
-    voice.file_id = "test_file_id"
-    voice.file_unique_id = "test_unique_id"
-    update.message.voice = voice
-    return update
-
-
-@pytest.fixture
-def mock_context(session_factory):
-    """Mock Telegram context with bot_data containing services."""
-    context = MagicMock()
-    context.bot_data = {
-        "db_session_factory": session_factory,
+def slack_context(session_factory):
+    """Slack Bolt context dict with services injected."""
+    return {
+        "services": {
+            "db_session_factory": session_factory,
+        },
     }
-    context.user_data = {}
-    context.bot = MagicMock()
-    context.bot.get_file = AsyncMock()
-    return context
 
 
 def make_entry(session, **kwargs):
@@ -144,7 +132,7 @@ def make_entry(session, **kwargs):
 
     defaults = {
         "raw_text": "Test entry",
-        "source": "telegram_text",
+        "source": "slack_text",
         "status": "open",
         "created_at": utc_now(),
         "updated_at": utc_now(),

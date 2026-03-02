@@ -8,9 +8,14 @@ import json
 import logging
 from datetime import timedelta
 
+from zoneinfo import ZoneInfo
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import sessionmaker
 
+TIMEZONE = ZoneInfo("America/New_York")
+
+from second_brain.bot.formatting import format_nudge_blocks
 from second_brain.config import get_config_int
 from second_brain.models.calendar_event import CalendarEvent
 from second_brain.models.entry import Entry
@@ -32,24 +37,24 @@ class SchedulerService:
     - Main scheduler reasoning (every N hours during active hours)
     - Calendar sync (every 30 minutes)
     - Meeting check (every 5 minutes)
-    - Retry failed enrichments/transcriptions (every 10 minutes)
+    - Retry failed enrichments (every 10 minutes)
     """
 
     def __init__(self, services: dict) -> None:
         self.services = services
         self.session_factory: sessionmaker = services["db_session_factory"]
         self.anthropic_client: AnthropicClient | None = services.get("anthropic_client")
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=TIMEZONE)
         self._pending_escalations: list = []
 
     def setup_scheduler(self, bot_data: dict) -> None:
         """Register all cron jobs and start the scheduler.
 
         Args:
-            bot_data: The bot's data dict, giving jobs access to services
-                and the ability to send Telegram messages.
+            bot_data: The services dict, giving jobs access to services
+                and the ability to send Slack messages.
         """
-        self.bot_data = bot_data
+        self.services = bot_data
 
         # Read intervals from config
         with self.session_factory() as session:
@@ -96,7 +101,7 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Retry failed enrichments / transcriptions
+        # Retry failed enrichments
         self.scheduler.add_job(
             self._run_retries,
             "interval",
@@ -180,16 +185,19 @@ class SchedulerService:
                     .all()
                 )
 
-            # Format data for the prompt
-            open_loops_text = self._format_open_loops(open_loops)
-            recent_text = self._format_recent_entries(recent_entries)
-            events_text = self._format_calendar_events(upcoming_events)
+                # Format data inside session to avoid detached instance access
+                open_loops_text = self._format_open_loops(open_loops)
+                recent_text = self._format_recent_entries(recent_entries)
+                events_text = self._format_calendar_events(upcoming_events)
+
+            def _esc(s: str) -> str:
+                return s.replace("{", "{{").replace("}", "}}")
 
             user_prompt = SCHEDULER_USER_PROMPT_TEMPLATE.format(
                 current_time=now.strftime("%Y-%m-%d %H:%M UTC"),
-                open_loops=open_loops_text or "(none)",
-                recent_entries=recent_text or "(none)",
-                calendar_events=events_text or "(none)",
+                open_loops=_esc(open_loops_text) or "(none)",
+                recent_entries=_esc(recent_text) or "(none)",
+                calendar_events=_esc(events_text) or "(none)",
             )
 
             # 4. Pass to Sonnet with strict filtering
@@ -229,7 +237,6 @@ class SchedulerService:
 
         try:
             logger.info("Calendar sync running")
-            # CalendarSyncService.sync() will be implemented by T14
             if hasattr(calendar_sync, "sync"):
                 await calendar_sync.sync()
         except Exception:
@@ -238,7 +245,7 @@ class SchedulerService:
     async def _run_meeting_check(self) -> None:
         """Meeting check job — sends pre-meeting briefs for upcoming meetings.
 
-        Delegates to the meeting brief service (T15) if available.
+        Delegates to the meeting brief service if available.
         """
         meeting_brief = self.services.get("meeting_brief")
         if not meeting_brief:
@@ -253,9 +260,9 @@ class SchedulerService:
             logger.exception("Meeting check job failed")
 
     async def _run_retries(self) -> None:
-        """Retry job — retries failed enrichments and transcriptions.
+        """Retry job — retries failed enrichments.
 
-        Delegates to the retry manager service (T17) if available.
+        Delegates to the retry manager service if available.
         """
         retry_manager = self.services.get("retry_manager")
         if not retry_manager:
@@ -295,9 +302,9 @@ class SchedulerService:
         message: str,
         escalation_level: int = 1,
     ) -> None:
-        """Create a nudge via NudgeManager and send it via Telegram.
+        """Create a nudge via NudgeManager and send it via Slack.
 
-        If the NudgeManager or Telegram bot is not available, just logs.
+        If the NudgeManager or Slack client is not available, just logs.
         """
         nudge_manager = self.services.get("nudge_manager")
         if not nudge_manager:
@@ -311,35 +318,23 @@ class SchedulerService:
             escalation_level=escalation_level,
         )
 
-        # Send via Telegram if bot is available
-        bot = self.bot_data.get("bot")
-        chat_id = self.bot_data.get("chat_id")
-        if bot and chat_id:
+        # Send via Slack if client is available
+        client = self.services.get("slack_client")
+        channel_id = self.services.get("channel_id")
+        if client and channel_id:
             try:
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-                inline_keyboard = InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                btn["text"], callback_data=btn["callback_data"]
-                            )
-                            for btn in row
-                        ]
-                        for row in keyboard
-                    ]
-                )
-                sent = await bot.send_message(
-                    chat_id=chat_id,
+                blocks = format_nudge_blocks(message, nudge_id, escalation_level)
+                response = await client.chat_postMessage(
+                    channel=channel_id,
                     text=formatted_text,
-                    reply_markup=inline_keyboard,
+                    blocks=blocks,
                 )
-                nudge_manager.set_telegram_message_id(nudge_id, sent.message_id)
+                nudge_manager.set_platform_message_id(nudge_id, response["ts"])
             except Exception:
-                logger.exception("Failed to send nudge via Telegram")
+                logger.exception("Failed to send nudge via Slack")
         else:
             logger.info(
-                "Nudge created but not sent (no bot/chat_id): %s", formatted_text
+                "Nudge created but not sent (no slack_client/channel_id): %s", formatted_text
             )
 
     async def run_escalation_check(self) -> None:
@@ -370,37 +365,24 @@ class SchedulerService:
         self,
         nudge_id: int,
         formatted_text: str,
-        keyboard: list[list[dict]],
+        blocks: list[dict],
     ) -> None:
-        """Send an already-created nudge message via Telegram."""
-        bot = self.bot_data.get("bot") if hasattr(self, "bot_data") else None
-        chat_id = self.bot_data.get("chat_id") if hasattr(self, "bot_data") else None
+        """Send an already-created nudge message via Slack."""
+        client = self.services.get("slack_client")
+        channel_id = self.services.get("channel_id")
 
-        if bot and chat_id:
+        if client and channel_id:
             try:
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-                inline_keyboard = InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                btn["text"], callback_data=btn["callback_data"]
-                            )
-                            for btn in row
-                        ]
-                        for row in keyboard
-                    ]
-                )
-                sent = await bot.send_message(
-                    chat_id=chat_id,
+                response = await client.chat_postMessage(
+                    channel=channel_id,
                     text=formatted_text,
-                    reply_markup=inline_keyboard,
+                    blocks=blocks,
                 )
                 nudge_manager = self.services.get("nudge_manager")
                 if nudge_manager:
-                    nudge_manager.set_telegram_message_id(nudge_id, sent.message_id)
+                    nudge_manager.set_platform_message_id(nudge_id, response["ts"])
             except Exception:
-                logger.exception("Failed to send escalated nudge via Telegram")
+                logger.exception("Failed to send escalated nudge via Slack")
 
     def shutdown(self) -> None:
         """Gracefully shut down the scheduler."""

@@ -42,10 +42,10 @@ class MeetingBriefService:
         self._send_callback = None
 
     def set_send_callback(self, callback) -> None:
-        """Set the async callback for sending Telegram messages.
+        """Set the async callback for sending messages.
 
         Args:
-            callback: Async callable(text: str, reply_markup=None) -> message.
+            callback: Async callable(text: str) -> dict with 'ts' key.
         """
         self._send_callback = callback
 
@@ -82,9 +82,8 @@ class MeetingBriefService:
                 brief_text = self._generate_brief(session, event)
                 if brief_text:
                     await self._send_brief(session, event, brief_text)
+                    session.commit()  # Commit each brief individually to prevent rollback
                     briefs_sent += 1
-
-            session.commit()
 
         if briefs_sent:
             logger.info("Sent %d pre-meeting brief(s)", briefs_sent)
@@ -92,11 +91,13 @@ class MeetingBriefService:
 
     def _already_briefed(self, session, event_id: str) -> bool:
         """Check if a brief was already sent for this meeting."""
+        # Match exact event tag format to prevent partial ID false positives
+        tag = f"[event:{event_id}]"
         existing = (
             session.query(NudgeHistory)
             .filter(
                 NudgeHistory.nudge_type == "pre_meeting_brief",
-                NudgeHistory.message_text.contains(event_id),
+                NudgeHistory.message_text.startswith(tag),
             )
             .first()
         )
@@ -146,12 +147,15 @@ class MeetingBriefService:
         attendees_str = ", ".join(attendees) if attendees else "(none listed)"
         meeting_time = event.start_time.strftime("%Y-%m-%d %H:%M")
 
+        def _esc(s: str) -> str:
+            return s.replace("{", "{{").replace("}", "}}")
+
         user_prompt = MEETING_BRIEF_USER_PROMPT_TEMPLATE.format(
-            meeting_title=event.title,
+            meeting_title=_esc(event.title),
             meeting_time=meeting_time,
-            attendees=attendees_str,
-            description=event.description or "(no description)",
-            relevant_entries=entries_text,
+            attendees=_esc(attendees_str),
+            description=_esc(event.description or "(no description)"),
+            relevant_entries=_esc(entries_text),
         )
 
         result: MeetingBriefResult = self.anthropic_client.call_sonnet(
@@ -222,7 +226,7 @@ class MeetingBriefService:
     async def _send_brief(
         self, session, event: CalendarEvent, brief_text: str
     ) -> None:
-        """Send the brief via Telegram and track it in nudge_history."""
+        """Send the brief via Slack and track it in nudge_history."""
         attendees = []
         if event.attendees:
             try:
@@ -249,14 +253,13 @@ class MeetingBriefService:
         session.add(nudge)
         session.flush()
 
-        # Send via Telegram if callback is set
+        # Send via Slack if callback is set
         if self._send_callback:
             try:
                 sent = await self._send_callback(formatted)
-                if sent and hasattr(sent, "message_id"):
-                    nudge.telegram_message_id = sent.message_id
+                nudge.platform_message_id = sent.get("ts") if isinstance(sent, dict) else None
             except Exception:
-                logger.exception("Failed to send meeting brief via Telegram")
+                logger.exception("Failed to send meeting brief via Slack")
         else:
             logger.info("Meeting brief generated but not sent (no callback): %s", event.title)
 

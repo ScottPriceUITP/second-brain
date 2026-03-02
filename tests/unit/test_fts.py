@@ -50,7 +50,7 @@ def _add_entry(session, clean_text: str) -> Entry:
     entry = Entry(
         raw_text=clean_text,
         clean_text=clean_text,
-        source="telegram_text",
+        source="slack_text",
         created_at=utc_now(),
         updated_at=utc_now(),
     )

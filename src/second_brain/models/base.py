@@ -34,4 +34,4 @@ def create_db_engine(database_url: str | None = None):
 
 def create_session_factory(engine):
     """Create a sessionmaker bound to the given engine."""
-    return sessionmaker(bind=engine)
+    return sessionmaker(engine)

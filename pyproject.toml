@@ -1,15 +1,16 @@
 [project]
 name = "second-brain"
 version = "0.1.0"
-description = "AI-powered personal knowledge management via Telegram"
+description = "AI-powered personal knowledge management via Slack"
 requires-python = ">=3.12"
 dependencies = [
-    "python-telegram-bot>=21.0",
+    "slack-bolt>=1.18",
+    "slack-sdk>=3.27",
+    "aiohttp>=3.9",
     "sqlalchemy>=2.0",
     "alembic>=1.13",
     "apscheduler>=3.10",
     "anthropic>=0.40",
-    "openai>=1.0",
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
     "pydantic>=2.0",

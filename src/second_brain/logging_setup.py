@@ -43,7 +43,8 @@ def setup_logging(log_level: str | None = None, log_dir: str = "logs") -> None:
     # Quiet noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("slack_bolt").setLevel(logging.WARNING)
+    logging.getLogger("slack_sdk").setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info(
         "Logging initialized at %s level", level

@@ -176,18 +176,36 @@ class AnthropicClient:
     def _parse_response(raw_text: str, response_model: type[BaseModel]) -> BaseModel:
         """Parse raw text as JSON and validate against the Pydantic model.
 
-        Handles the case where the model wraps JSON in a markdown code block.
+        Handles common LLM output quirks:
+        - JSON wrapped in markdown code fences (```json ... ```)
+        - JSON followed by explanatory text
+        - JSON preceded by commentary
         """
         text = raw_text.strip()
+
+        # Strip markdown code fences if present
         if text.startswith("```"):
-            # Strip markdown code fences
             lines = text.split("\n")
             # Remove first line (```json or ```) and last line (```)
             lines = [l for l in lines[1:] if l.strip() != "```"]
-            text = "\n".join(lines)
+            text = "\n".join(lines).strip()
 
-        data = json.loads(text)
-        return response_model.model_validate(data)
+        # Try direct parse first (fast path)
+        try:
+            data = json.loads(text)
+            return response_model.model_validate(data)
+        except json.JSONDecodeError:
+            pass
+
+        # Extract the first JSON object or array from the text
+        # Find the first { or [ and use a decoder to consume just that object
+        for i, ch in enumerate(text):
+            if ch in "{[":
+                decoder = json.JSONDecoder()
+                data, _ = decoder.raw_decode(text, i)
+                return response_model.model_validate(data)
+
+        raise json.JSONDecodeError("No JSON object found in response", text, 0)
 
     @staticmethod
     def _backoff(attempt: int) -> None:

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from second_brain.bot.formatting import format_nudge
+from second_brain.bot.formatting import format_nudge, format_nudge_blocks
 from second_brain.config import get_config_int
 from second_brain.models.entry import Entry
 from second_brain.models.nudge import NudgeHistory
@@ -37,8 +37,8 @@ class NudgeManager:
         nudge_type: str,
         message: str,
         escalation_level: int = 1,
-    ) -> tuple[int, str, list[list[dict]]]:
-        """Create a nudge record and prepare the Telegram message with inline buttons.
+    ) -> tuple[int, str, list[dict]]:
+        """Create a nudge record and prepare the message with Block Kit buttons.
 
         Args:
             entry_id: The entry this nudge is about (None for pattern nudges).
@@ -47,9 +47,9 @@ class NudgeManager:
             escalation_level: 1=neutral, 2=urgent, 3=direct.
 
         Returns:
-            Tuple of (nudge_id, formatted message text, inline keyboard rows).
+            Tuple of (nudge_id, formatted message text, Block Kit blocks).
             The caller (bot handler / scheduler) is responsible for actually
-            sending the Telegram message and updating telegram_message_id.
+            sending the message and updating platform_message_id.
         """
         with self.session_factory() as session:
             nudge = NudgeHistory(
@@ -65,15 +65,7 @@ class NudgeManager:
             nudge_id = nudge.id
 
         formatted = format_nudge(message, escalation_level)
-
-        # Inline keyboard: Done / Snooze / Drop
-        keyboard = [
-            [
-                {"text": "Done", "callback_data": f"nudge:done:{nudge_id}"},
-                {"text": "Snooze", "callback_data": f"nudge:snooze:{nudge_id}"},
-                {"text": "Drop", "callback_data": f"nudge:drop:{nudge_id}"},
-            ]
-        ]
+        blocks = format_nudge_blocks(message, nudge_id, escalation_level)
 
         logger.info(
             "Nudge created: id=%d type=%s entry_id=%s level=%d",
@@ -83,14 +75,14 @@ class NudgeManager:
             escalation_level,
         )
 
-        return nudge_id, formatted, keyboard
+        return nudge_id, formatted, blocks
 
-    def set_telegram_message_id(self, nudge_id: int, telegram_message_id: int) -> None:
-        """Update the nudge with the Telegram message ID after sending."""
+    def set_platform_message_id(self, nudge_id: int, message_id: str) -> None:
+        """Update the nudge with the platform message ID after sending."""
         with self.session_factory() as session:
             nudge = session.get(NudgeHistory, nudge_id)
             if nudge:
-                nudge.telegram_message_id = telegram_message_id
+                nudge.platform_message_id = message_id
                 session.commit()
 
     def handle_nudge_action(
@@ -173,11 +165,15 @@ class NudgeManager:
 
             nudge_message = nudge.message_text
 
-        today = date.today()
+        today = utc_now().date()
+
+        def _esc(s: str) -> str:
+            return s.replace("{", "{{").replace("}", "}}")
+
         user_prompt = NUDGE_PARSING_USER_PROMPT_TEMPLATE.format(
             current_date=today.isoformat(),
-            nudge_message=nudge_message,
-            user_response=user_response,
+            nudge_message=_esc(nudge_message),
+            user_response=_esc(user_response),
         )
 
         result: NudgeParsingResult = self.anthropic_client.call_haiku(
@@ -233,10 +229,15 @@ class NudgeManager:
                     continue
 
                 # Check no existing escalation at this level for the same entry
+                # Use IS for NULL-safe comparison (SQL NULL == NULL is false)
+                if nudge.entry_id is not None:
+                    entry_filter = NudgeHistory.entry_id == nudge.entry_id
+                else:
+                    entry_filter = NudgeHistory.entry_id.is_(None)
                 existing = (
                     session.query(NudgeHistory)
                     .filter(
-                        NudgeHistory.entry_id == nudge.entry_id,
+                        entry_filter,
                         NudgeHistory.escalation_level == next_level,
                         NudgeHistory.user_action.is_(None),
                     )
@@ -310,11 +311,14 @@ class NudgeManager:
     def get_snoozed_due(self) -> list[dict]:
         """Find snoozed nudges whose snooze period has expired.
 
+        Marks found nudges as 're_nudged' so they are not picked up again
+        on the next scheduler cycle.
+
         Returns:
             List of dicts with entry_id, nudge_type, message_text keys,
             ready to be re-nudged at level 1.
         """
-        today = date.today()
+        today = utc_now().date()
         with self.session_factory() as session:
             nudges = (
                 session.query(NudgeHistory)
@@ -324,7 +328,7 @@ class NudgeManager:
                 )
                 .all()
             )
-            return [
+            result = [
                 {
                     "entry_id": n.entry_id,
                     "nudge_type": n.nudge_type,
@@ -332,3 +336,9 @@ class NudgeManager:
                 }
                 for n in nudges
             ]
+            # Mark as processed to prevent infinite re-nudging
+            for n in nudges:
+                n.user_action = "re_nudged"
+                n.user_action_at = utc_now()
+            session.commit()
+            return result

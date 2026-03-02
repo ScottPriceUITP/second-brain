@@ -32,12 +32,11 @@ class Entry(Base):
     )  # open/resolved/archived/pending_enrichment/pending_transcription
     source: Mapped[str] = mapped_column(
         Text, nullable=False
-    )  # telegram_text/telegram_voice
+    )  # slack_text
     is_open_loop: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     follow_up_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    platform_message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     calendar_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    audio_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     # Relationships

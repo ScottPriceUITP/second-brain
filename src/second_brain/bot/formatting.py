@@ -1,7 +1,9 @@
-"""Visual formatting helpers for Telegram messages.
+"""Visual formatting helpers for Slack messages.
 
-All formatting uses Telegram MarkdownV2 or plain text.
-Each function returns a string ready to send via bot.send_message().
+All formatting uses plain text (which Slack renders natively) or Block Kit
+for interactive elements.  Each plain-text function returns a string ready
+to send via client.chat_postMessage(text=...).  The *_blocks() helpers
+return lists of Block Kit block dicts.
 """
 
 
@@ -38,6 +40,58 @@ def format_nudge(nudge_text: str, escalation_level: int = 1) -> str:
     }
     prefix = prefixes.get(escalation_level, "REMINDER")
     return f"[{prefix}]\n{nudge_text}"
+
+
+def format_nudge_blocks(
+    message: str, nudge_id: int, escalation_level: int = 1
+) -> list[dict]:
+    """Return Slack Block Kit blocks for a nudge with action buttons.
+
+    Args:
+        message: The nudge message content.
+        nudge_id: Database ID of the nudge (used as button values).
+        escalation_level: 1=neutral, 2=urgent, 3=direct.
+
+    Returns:
+        List of Block Kit block dicts with a section and an actions row.
+    """
+    prefixes = {
+        1: "REMINDER",
+        2: "ATTENTION",
+        3: "ACTION NEEDED",
+    }
+    prefix = prefixes.get(escalation_level, "REMINDER")
+
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"[{prefix}]\n{message}"},
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Done"},
+                    "action_id": "nudge_done",
+                    "value": str(nudge_id),
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Snooze"},
+                    "action_id": "nudge_snooze",
+                    "value": str(nudge_id),
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Drop"},
+                    "action_id": "nudge_drop",
+                    "value": str(nudge_id),
+                    "style": "danger",
+                },
+            ],
+        },
+    ]
 
 
 def format_error(message: str) -> str:

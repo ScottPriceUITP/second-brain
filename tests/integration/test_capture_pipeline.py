@@ -86,21 +86,23 @@ class TestCapturePipeline:
         enrichment_result_capture,
     ):
         """Test complete capture flow: text -> enrich -> entity resolution -> store."""
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "Had a great meeting with Reynolds Electric about supply chain improvements"
-        update.message.message_id = 100
-        update.message.reply_text = AsyncMock()
-
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": mock_enrichment_service,
-            "anthropic_client": None,  # No connection scoring
+        event = {
+            "type": "message",
+            "text": "Had a great meeting with Reynolds Electric about supply chain improvements",
+            "ts": "1234567890.100",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": mock_enrichment_service,
+                "anthropic_client": None,  # No connection scoring
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         # Verify enrichment service was called
         mock_enrichment_service.enrich_text.assert_called_once()
@@ -116,7 +118,7 @@ class TestCapturePipeline:
             assert entry.entry_type == "meeting_note"
             assert entry.is_open_loop is True
             assert entry.status == "open"
-            assert entry.source == "telegram_text"
+            assert entry.source == "slack_text"
             assert entry.follow_up_date is not None
             assert str(entry.follow_up_date) == "2026-03-15"
 
@@ -147,8 +149,8 @@ class TestCapturePipeline:
             assert len(tag_junctions) == 3
 
         # Verify confirmation was sent
-        update.message.reply_text.assert_called()
-        reply_text = update.message.reply_text.call_args[0][0]
+        say.assert_called()
+        reply_text = say.call_args.kwargs["text"]
         assert "Captured" in reply_text
 
     @pytest.mark.asyncio
@@ -170,7 +172,7 @@ class TestCapturePipeline:
                 existing = Entry(
                     raw_text=text_content,
                     clean_text=text_content,
-                    source="telegram_text",
+                    source="slack_text",
                     status="open",
                     entry_type="meeting_note",
                     created_at=utc_now(),
@@ -181,24 +183,26 @@ class TestCapturePipeline:
 
         mock_anthropic_client.call_haiku.return_value = mock_connection_scoring_response
 
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "Reynolds Electric supply chain update"
-        update.message.message_id = 101
-        update.message.reply_text = AsyncMock()
-
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": mock_enrichment_service,
-            "anthropic_client": mock_anthropic_client,
+        event = {
+            "type": "message",
+            "text": "Reynolds Electric supply chain update",
+            "ts": "1234567890.101",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": mock_enrichment_service,
+                "anthropic_client": mock_anthropic_client,
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         # Verify confirmation was sent
-        update.message.reply_text.assert_called()
+        say.assert_called()
 
     @pytest.mark.asyncio
     async def test_capture_stores_entry_before_enrichment(
@@ -207,21 +211,23 @@ class TestCapturePipeline:
         session,
     ):
         """Test that entry is stored with pending_enrichment status before enrichment runs."""
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "A test message"
-        update.message.message_id = 102
-        update.message.reply_text = AsyncMock()
-
-        # No enrichment service means entry stays as pending_enrichment
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": None,
+        event = {
+            "type": "message",
+            "text": "A test message",
+            "ts": "1234567890.102",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        # No enrichment service means entry stays as pending_enrichment
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": None,
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         with session_factory() as s:
             entries = s.query(Entry).all()
@@ -239,20 +245,22 @@ class TestCapturePipeline:
         failing_enrichment = MagicMock()
         failing_enrichment.enrich_text = MagicMock(side_effect=Exception("API error"))
 
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "Test message that will fail enrichment"
-        update.message.message_id = 103
-        update.message.reply_text = AsyncMock()
-
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": failing_enrichment,
+        event = {
+            "type": "message",
+            "text": "Test message that will fail enrichment",
+            "ts": "1234567890.103",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": failing_enrichment,
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         with session_factory() as s:
             entries = s.query(Entry).all()
@@ -261,8 +269,8 @@ class TestCapturePipeline:
             assert entries[0].status == "pending_enrichment"
 
         # User should be notified of the error
-        update.message.reply_text.assert_called()
-        reply_text = update.message.reply_text.call_args[0][0]
+        say.assert_called()
+        reply_text = say.call_args.kwargs["text"]
         assert "WARNING" in reply_text
 
     @pytest.mark.asyncio
@@ -283,21 +291,23 @@ class TestCapturePipeline:
         mock_query_engine = MagicMock()
         mock_query_engine.handle_query = MagicMock(return_value=mock_query_result)
 
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "What did we discuss about Reynolds Electric?"
-        update.message.message_id = 104
-        update.message.reply_text = AsyncMock()
-
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": query_enrichment,
-            "query_engine": mock_query_engine,
+        event = {
+            "type": "message",
+            "text": "What did we discuss about Reynolds Electric?",
+            "ts": "1234567890.104",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": query_enrichment,
+                "query_engine": mock_query_engine,
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         # Query engine should have been called
         mock_query_engine.handle_query.assert_called_once()
@@ -321,21 +331,23 @@ class TestCapturePipeline:
             s.commit()
             existing_entity_id = existing_entity.id
 
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "Meeting with Reynolds Electric about supply chain"
-        update.message.message_id = 105
-        update.message.reply_text = AsyncMock()
-
-        context = MagicMock()
-        context.bot_data = {
-            "db_session_factory": session_factory,
-            "enrichment": mock_enrichment_service,
-            "anthropic_client": None,
+        event = {
+            "type": "message",
+            "text": "Meeting with Reynolds Electric about supply chain",
+            "ts": "1234567890.105",
+            "channel": "C123",
+            "user": "U123",
         }
-        context.user_data = {}
+        say = AsyncMock()
+        context = {
+            "services": {
+                "db_session_factory": session_factory,
+                "enrichment": mock_enrichment_service,
+                "anthropic_client": None,
+            },
+        }
 
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         with session_factory() as s:
             # Should have 2 entities total: existing "Reynolds Electric" + new "Sarah Chen"
@@ -347,14 +359,19 @@ class TestCapturePipeline:
     @pytest.mark.asyncio
     async def test_capture_with_no_message_text(self, session_factory):
         """Test that handler returns early when message has no text."""
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = None
+        event = {
+            "type": "message",
+            "text": "",
+            "ts": "1234567890.106",
+            "channel": "C123",
+            "user": "U123",
+        }
+        say = AsyncMock()
+        context = {
+            "services": {"db_session_factory": session_factory},
+        }
 
-        context = MagicMock()
-        context.bot_data = {"db_session_factory": session_factory}
-
-        await handle_text_message(update, context)
+        await handle_text_message(event, say, context)
 
         # No entries should be created
         with session_factory() as s:
@@ -364,17 +381,20 @@ class TestCapturePipeline:
     @pytest.mark.asyncio
     async def test_capture_with_no_database(self):
         """Test that handler reports error when database is unavailable."""
-        update = MagicMock()
-        update.message = MagicMock()
-        update.message.text = "Test message"
-        update.message.message_id = 106
-        update.message.reply_text = AsyncMock()
+        event = {
+            "type": "message",
+            "text": "Test message",
+            "ts": "1234567890.107",
+            "channel": "C123",
+            "user": "U123",
+        }
+        say = AsyncMock()
+        context = {
+            "services": {},
+        }
 
-        context = MagicMock()
-        context.bot_data = {}
+        await handle_text_message(event, say, context)
 
-        await handle_text_message(update, context)
-
-        update.message.reply_text.assert_called()
-        reply_text = update.message.reply_text.call_args[0][0]
+        say.assert_called()
+        reply_text = say.call_args.kwargs["text"]
         assert "WARNING" in reply_text

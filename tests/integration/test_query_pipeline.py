@@ -55,7 +55,7 @@ def _seed_entries(session_factory):
                 clean_text=data["clean_text"],
                 entry_type=data["entry_type"],
                 status=data["status"],
-                source="telegram_text",
+                source="slack_text",
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )
