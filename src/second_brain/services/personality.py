@@ -307,6 +307,20 @@ class PersonalityService:
                 logger.info("Daily summary disabled")
                 return
 
+            # Guard against duplicate summaries (e.g. scheduler restart)
+            today_start = _local_day_start()
+            already_sent = (
+                session.query(func.count(NudgeHistory.id))
+                .filter(
+                    NudgeHistory.nudge_type == "daily_summary",
+                    NudgeHistory.sent_at >= today_start,
+                )
+                .scalar()
+            )
+            if already_sent:
+                logger.info("Daily summary already sent today, skipping")
+                return
+
         try:
             data = self.gather_summary_data()
             summary = self.generate_daily_summary(data)

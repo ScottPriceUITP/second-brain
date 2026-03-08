@@ -4,6 +4,8 @@ import logging
 import re
 from datetime import date, timedelta
 
+from sqlalchemy import func
+
 from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
@@ -251,10 +253,19 @@ async def summary_review_loops_handler(ack, action, body, say, context, client):
     # Extract loop data inside session, then close before creating nudges
     # (create_nudge opens its own session; SQLite can deadlock with nested sessions)
     with session_factory() as session:
+        MAX_LOOPS_DISPLAYED = 10
+
+        total_open = (
+            session.query(func.count(Entry.id))
+            .filter(Entry.is_open_loop.is_(True), Entry.status == "open")
+            .scalar()
+        )
+
         open_loops = (
             session.query(Entry)
             .filter(Entry.is_open_loop.is_(True), Entry.status == "open")
             .order_by(Entry.created_at.desc())
+            .limit(MAX_LOOPS_DISPLAYED)
             .all()
         )
 
@@ -294,6 +305,14 @@ async def summary_review_loops_handler(ack, action, body, say, context, client):
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": f"• [{item['created']}] {item['snippet']}"},
             })
+
+    # Add overflow note if there are more loops than displayed
+    remaining = total_open - len(loop_data)
+    if remaining > 0:
+        loop_blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"_…and {remaining} more open loop{'s' if remaining != 1 else ''}._"},
+        })
 
     # Update original message with expanded loop list
     original_text = body["message"].get("text", "")

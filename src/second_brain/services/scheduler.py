@@ -120,9 +120,18 @@ class SchedulerService:
         )
 
         # Daily summary
-        summary_parts = daily_summary_time.split(":")
-        summary_hour = int(summary_parts[0])
-        summary_minute = int(summary_parts[1]) if len(summary_parts) > 1 else 0
+        try:
+            summary_parts = daily_summary_time.split(":")
+            summary_hour = int(summary_parts[0])
+            summary_minute = int(summary_parts[1]) if len(summary_parts) > 1 else 0
+            if not (0 <= summary_hour <= 23 and 0 <= summary_minute <= 59):
+                raise ValueError
+        except (ValueError, IndexError):
+            logger.warning(
+                "Invalid daily_summary_time %r, falling back to 16:30",
+                daily_summary_time,
+            )
+            summary_hour, summary_minute = 16, 30
         self.scheduler.add_job(
             self._run_daily_summary,
             "cron",
