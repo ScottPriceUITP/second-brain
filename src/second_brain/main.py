@@ -129,6 +129,23 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: nudge_manager")
 
+    # Personality service
+    try:
+        from second_brain.services.personality import PersonalityService
+
+        if "anthropic_client" in services:
+            services["personality"] = PersonalityService(
+                session_factory=session_factory,
+                anthropic_client=services["anthropic_client"],
+            )
+            logger.info("Service loaded: personality")
+        else:
+            logger.info("Service skipped (no anthropic_client): personality")
+    except ImportError:
+        logger.info("Service not available (skipped): personality")
+    except Exception:
+        logger.exception("Service failed to load: personality")
+
     # Retry manager
     try:
         from second_brain.services.retry_manager import RetryManager

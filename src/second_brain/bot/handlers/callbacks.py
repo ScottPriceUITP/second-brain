@@ -234,6 +234,90 @@ async def snooze_date_modal_handler(ack, body, context, client):
     )
 
 
+async def summary_review_loops_handler(ack, action, body, say, context, client):
+    """Handle 'Review open loops' button on daily summary."""
+    await ack()
+
+    services = context.get("services", {})
+    session_factory = services.get("db_session_factory")
+    if not session_factory:
+        return
+
+    from second_brain.models.entry import Entry
+    from second_brain.bot.formatting import format_nudge_blocks
+
+    nudge_manager = services.get("nudge_manager")
+
+    # Extract loop data inside session, then close before creating nudges
+    # (create_nudge opens its own session; SQLite can deadlock with nested sessions)
+    with session_factory() as session:
+        open_loops = (
+            session.query(Entry)
+            .filter(Entry.is_open_loop.is_(True), Entry.status == "open")
+            .order_by(Entry.created_at.desc())
+            .all()
+        )
+
+        if not open_loops:
+            await client.chat_update(
+                channel=body["channel"]["id"],
+                ts=body["message"]["ts"],
+                text=body["message"].get("text", "") + "\n\n_No open loops right now._",
+                blocks=[],
+            )
+            return
+
+        # Collect data while session is open, then close it
+        loop_data = [
+            {
+                "entry_id": entry.id,
+                "snippet": (entry.clean_text or entry.raw_text or "(empty)")[:150],
+                "created": entry.created_at.strftime("%Y-%m-%d"),
+            }
+            for entry in open_loops
+        ]
+
+    # Create nudges outside the query session
+    loop_blocks = []
+    for item in loop_data:
+        if nudge_manager:
+            nudge_id, _, _ = nudge_manager.create_nudge(
+                entry_id=item["entry_id"],
+                nudge_type="open_loop",
+                message=item["snippet"],
+            )
+            loop_blocks.extend(format_nudge_blocks(
+                f"[{item['created']}] {item['snippet']}", nudge_id
+            ))
+        else:
+            loop_blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"• [{item['created']}] {item['snippet']}"},
+            })
+
+    # Update original message with expanded loop list
+    original_text = body["message"].get("text", "")
+    await client.chat_update(
+        channel=body["channel"]["id"],
+        ts=body["message"]["ts"],
+        text=original_text,
+        blocks=loop_blocks,
+    )
+
+
+async def summary_dismiss_handler(ack, action, body, say, context, client):
+    """Handle 'Looks good' button on daily summary — remove buttons."""
+    await ack()
+
+    original_text = body["message"].get("text", "")
+    await client.chat_update(
+        channel=body["channel"]["id"],
+        ts=body["message"]["ts"],
+        text=original_text,
+        blocks=[],
+    )
+
+
 async def entity_select_handler(ack, action, body, say, context, client):
     """Handle entity disambiguation -- user selected an existing entity."""
     await ack()
@@ -434,6 +518,10 @@ def register(app) -> None:
 
     # Custom snooze date modal submission
     app.view("snooze_date_modal")(snooze_date_modal_handler)
+
+    # Daily summary actions
+    app.action("summary_review_loops")(summary_review_loops_handler)
+    app.action("summary_dismiss")(summary_dismiss_handler)
 
     # Entity disambiguation actions (regex pattern matching)
     app.action(re.compile(r"^entity_select:"))(entity_select_handler)

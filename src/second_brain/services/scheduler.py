@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 TIMEZONE = ZoneInfo("America/New_York")
 
 from second_brain.bot.formatting import format_nudge_blocks
-from second_brain.config import get_config_int
+from second_brain.config import get_config, get_config_int
 from second_brain.models.calendar_event import CalendarEvent
 from second_brain.models.entry import Entry
 from second_brain.prompts.scheduler_reasoning import (
@@ -72,6 +72,7 @@ class SchedulerService:
             escalation_minutes = (
                 get_config_int(session, "escalation_check_interval_minutes") or 15
             )
+            daily_summary_time = get_config(session, "daily_summary_time") or "16:30"
 
         # Main scheduler: every N hours during active hours
         self.scheduler.add_job(
@@ -118,6 +119,19 @@ class SchedulerService:
             replace_existing=True,
         )
 
+        # Daily summary
+        summary_parts = daily_summary_time.split(":")
+        summary_hour = int(summary_parts[0])
+        summary_minute = int(summary_parts[1]) if len(summary_parts) > 1 else 0
+        self.scheduler.add_job(
+            self._run_daily_summary,
+            "cron",
+            hour=summary_hour,
+            minute=summary_minute,
+            id="daily_summary",
+            replace_existing=True,
+        )
+
         # Pattern detection — daily end-of-day insights
         self.scheduler.add_job(
             self._run_pattern_detection,
@@ -131,7 +145,8 @@ class SchedulerService:
         logger.info(
             "Scheduler started: main every %dh (%d-%d), "
             "calendar every %dm, meetings every %dm, retries every %dm, "
-            "escalation every %dm, pattern detection daily at 20:00",
+            "escalation every %dm, pattern detection daily at 20:00, "
+            "daily summary at %s",
             scheduler_hours,
             start_hour,
             end_hour,
@@ -139,6 +154,7 @@ class SchedulerService:
             meeting_minutes,
             retry_minutes,
             escalation_minutes,
+            daily_summary_time,
         )
 
     async def _run_main_scheduler(self) -> None:
@@ -209,23 +225,25 @@ class SchedulerService:
             # 5. Most runs produce no message
             if not decision.should_nudge:
                 logger.info("Main scheduler: no nudge needed")
-                return
-
-            # 6. Fire a nudge
-            logger.info(
-                "Main scheduler: nudge triggered type=%s entry_id=%s",
-                decision.nudge_type,
-                decision.entry_id,
-            )
-            await self._send_nudge(
-                entry_id=decision.entry_id,
-                nudge_type=decision.nudge_type or "open_loop",
-                message=decision.message or "",
-                escalation_level=decision.escalation_level,
-            )
+            else:
+                # 6. Fire a nudge
+                logger.info(
+                    "Main scheduler: nudge triggered type=%s entry_id=%s",
+                    decision.nudge_type,
+                    decision.entry_id,
+                )
+                await self._send_nudge(
+                    entry_id=decision.entry_id,
+                    nudge_type=decision.nudge_type or "open_loop",
+                    message=decision.message or "",
+                    escalation_level=decision.escalation_level,
+                )
 
         except Exception:
             logger.exception("Main scheduler job failed")
+
+        # Personality check runs independently of main scheduler success/failure
+        await self._run_personality_check()
 
     async def _run_calendar_sync(self) -> None:
         """Calendar sync job — delegates to CalendarSyncService if available."""
@@ -274,6 +292,41 @@ class SchedulerService:
                 await retry_manager.retry_pending()
         except Exception:
             logger.exception("Retry job failed")
+
+    async def _run_personality_check(self) -> None:
+        """Check if a personality message should be sent."""
+        personality = self.services.get("personality")
+        if not personality:
+            logger.debug("Personality check skipped: service not available")
+            return
+
+        client = self.services.get("slack_client")
+        channel_id = self.services.get("channel_id")
+        if not client or not channel_id:
+            return
+
+        try:
+            await personality.send_personality_message(client, channel_id)
+        except Exception:
+            logger.exception("Personality check failed")
+
+    async def _run_daily_summary(self) -> None:
+        """Send the daily end-of-day summary."""
+        personality = self.services.get("personality")
+        if not personality:
+            logger.debug("Daily summary skipped: service not available")
+            return
+
+        client = self.services.get("slack_client")
+        channel_id = self.services.get("channel_id")
+        if not client or not channel_id:
+            return
+
+        try:
+            logger.info("Daily summary running")
+            await personality.send_daily_summary(client, channel_id)
+        except Exception:
+            logger.exception("Daily summary job failed")
 
     async def _run_pattern_detection(self) -> None:
         """Pattern detection job — detects patterns and sends nudges for insights."""
