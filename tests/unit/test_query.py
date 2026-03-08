@@ -18,7 +18,6 @@ from second_brain.services.query_engine import (
     QuerySource,
     _ClassifyResponse,
 )
-from second_brain.services.query_session import QuerySession
 from second_brain.utils.time import utc_now
 
 
@@ -299,18 +298,17 @@ class TestHandleQuery:
         assert "No matching" in response.answer
 
 
-class TestHandleQueryWithSession:
-    """Test queries with session context (follow-up queries)."""
+class TestHandleQueryWithConversationHistory:
+    """Test queries with conversation history context."""
 
-    def test_session_context_included_in_prompt(self, db_session, sf, mock_client):
+    def test_conversation_history_included_in_prompt(self, db_session, sf, mock_client):
         e1 = _add_entry(db_session, "Reynolds Electric supply chain details")
         db_session.commit()
 
-        session_ctx = QuerySession(
-            query="What about Reynolds Electric?",
-            response="Reynolds Electric is a supply chain company.",
-            source_entry_ids=[e1.id],
-        )
+        history = [
+            {"role": "user", "text": "What about Reynolds Electric?"},
+            {"role": "assistant", "text": "Reynolds Electric is a supply chain company."},
+        ]
 
         mock_client.call_haiku.side_effect = [
             _ClassifyResponse(complexity="simple"),
@@ -323,47 +321,36 @@ class TestHandleQueryWithSession:
         engine = QueryEngine(mock_client, sf)
         response = engine.handle_query(
             "Tell me more about their supply chain",
-            session_context=session_ctx,
+            conversation_history=history,
         )
 
         assert response.answer
-        # Verify the user prompt sent to LLM includes session context
+        # Verify the user prompt sent to LLM includes conversation history
         haiku_calls = mock_client.call_haiku.call_args_list
         answer_call = haiku_calls[1]
         user_prompt = answer_call.kwargs.get("user_prompt") or answer_call[1].get("user_prompt") or answer_call[0][1]
-        assert "PREVIOUS QUERY CONTEXT" in user_prompt
+        assert "CONVERSATION HISTORY:" in user_prompt
         assert "Reynolds Electric" in user_prompt
 
-    def test_session_entry_ids_merged(self, db_session, sf, mock_client):
-        """Session source entry IDs are merged into context even if FTS misses them."""
-        e1 = _add_entry(db_session, "Reynolds Electric original meeting notes")
-        e2 = _add_entry(db_session, "Completely different topic about cats and dogs")
+    def test_no_history_omits_section(self, db_session, sf, mock_client):
+        _add_entry(db_session, "Reynolds Electric meeting notes")
         db_session.commit()
-
-        session_ctx = QuerySession(
-            query="Previous question",
-            response="Previous answer",
-            source_entry_ids=[e2.id],  # e2 wouldn't come from FTS for "Reynolds"
-        )
 
         mock_client.call_haiku.side_effect = [
             _ClassifyResponse(complexity="simple"),
             SimpleQueryResponse(
-                answer="Combined context answer.",
-                source_entry_ids=[e1.id, e2.id],
+                answer="Answer.",
+                source_entry_ids=[],
             ),
         ]
 
         engine = QueryEngine(mock_client, sf)
-        response = engine.handle_query(
-            "Reynolds Electric follow-up",
-            session_context=session_ctx,
-        )
+        engine.handle_query("Reynolds meeting")
 
-        # Both entries should be available as sources
-        source_ids = {s.entry_id for s in response.sources}
-        assert e1.id in source_ids
-        assert e2.id in source_ids
+        haiku_calls = mock_client.call_haiku.call_args_list
+        answer_call = haiku_calls[1]
+        user_prompt = answer_call.kwargs.get("user_prompt") or answer_call[1].get("user_prompt") or answer_call[0][1]
+        assert "CONVERSATION HISTORY:" not in user_prompt
 
 
 class TestBuildUserPrompt:
@@ -390,15 +377,15 @@ class TestBuildUserPrompt:
         prompt = QueryEngine._build_user_prompt("What happened?", [], None)
         assert "(No matching entries found)" in prompt
 
-    def test_with_session_context(self):
-        session_ctx = QuerySession(
-            query="Previous question",
-            response="Previous answer",
-        )
-        prompt = QueryEngine._build_user_prompt("Follow up?", [], session_ctx)
-        assert "PREVIOUS QUERY CONTEXT:" in prompt
-        assert "Previous question" in prompt
-        assert "Previous answer" in prompt
+    def test_with_conversation_history(self):
+        history = [
+            {"role": "user", "text": "Previous question"},
+            {"role": "assistant", "text": "Previous answer"},
+        ]
+        prompt = QueryEngine._build_user_prompt("Follow up?", [], history)
+        assert "CONVERSATION HISTORY:" in prompt
+        assert "You: Previous question" in prompt
+        assert "Assistant: Previous answer" in prompt
 
     def test_uses_clean_text_over_raw(self):
         entry = Entry(

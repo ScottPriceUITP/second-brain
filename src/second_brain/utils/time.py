@@ -8,6 +8,9 @@ All code should use utc_now() instead of datetime.now(timezone.utc).
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+LOCAL_TZ = ZoneInfo("America/New_York")
 
 
 def utc_now() -> datetime:
@@ -17,3 +20,8 @@ def utc_now() -> datetime:
     read back from the database.
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def to_local(dt: datetime) -> datetime:
+    """Convert a naive-UTC datetime to local time (America/New_York)."""
+    return dt.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)

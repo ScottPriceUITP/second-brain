@@ -32,18 +32,13 @@ async def ask_command(ack, command, say, context):
         await say(text="Query system not yet available.")
         return
 
-    session_manager = services.get("query_session_manager")
-    session_ctx = None
-    if session_manager:
-        session_ctx = session_manager.session
-
     try:
-        result = query_engine.handle_query(question, session_context=session_ctx)
+        from second_brain.bot.history import get_conversation_context
 
-        # Update session
-        if session_manager:
-            source_ids = [s.entry_id for s in result.sources]
-            session_manager.update(question, result.answer, source_ids)
+        channel_id = command.get("channel_id", "")
+        conversation_history = await get_conversation_context(services, channel_id)
+
+        result = query_engine.handle_query(question, conversation_history=conversation_history)
 
         # Format and send
         sources = [

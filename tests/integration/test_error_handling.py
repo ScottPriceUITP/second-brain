@@ -70,7 +70,7 @@ class TestEnrichmentErrorHandling:
         # User gets error notification
         say.assert_called()
         reply_text = say.call_args.kwargs["text"]
-        assert "WARNING" in reply_text
+        assert "Could not process" in reply_text
         assert "saved" in reply_text.lower() or "retried" in reply_text.lower()
 
     @pytest.mark.asyncio
@@ -120,7 +120,7 @@ class TestEnrichmentErrorHandling:
         # Recovery notification should be sent
         mock_client.chat_postMessage.assert_called()
         call_kwargs = mock_client.chat_postMessage.call_args.kwargs
-        assert "RECOVERED" in call_kwargs["text"]
+        assert "Recovered" in call_kwargs["text"]
 
     @pytest.mark.asyncio
     async def test_enrichment_retry_failure_increments_count(
@@ -208,7 +208,7 @@ class TestEnrichmentErrorHandling:
         # Error notification should have been sent
         mock_client.chat_postMessage.assert_called()
         last_call = mock_client.chat_postMessage.call_args.kwargs
-        assert "WARNING" in last_call["text"]
+        assert "can't enrich" in last_call["text"]
 
         # Retry tracking should be cleaned up
         assert entry_id not in retry_manager._enrichment_retries
@@ -303,7 +303,7 @@ class TestEndToEndErrorRecovery:
         # Step 4: Verify recovery notification was sent
         mock_client.chat_postMessage.assert_called()
         call_kwargs = mock_client.chat_postMessage.call_args.kwargs
-        assert "RECOVERED" in call_kwargs["text"]
+        assert "Recovered" in call_kwargs["text"]
 
     @pytest.mark.asyncio
     async def test_retry_pending_calls_enrichment(

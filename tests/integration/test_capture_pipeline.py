@@ -271,7 +271,7 @@ class TestCapturePipeline:
         # User should be notified of the error
         say.assert_called()
         reply_text = say.call_args.kwargs["text"]
-        assert "WARNING" in reply_text
+        assert "Could not process" in reply_text
 
     @pytest.mark.asyncio
     async def test_query_intent_routes_to_query_engine(
@@ -397,4 +397,4 @@ class TestCapturePipeline:
 
         say.assert_called()
         reply_text = say.call_args.kwargs["text"]
-        assert "WARNING" in reply_text
+        assert "Database not available" in reply_text

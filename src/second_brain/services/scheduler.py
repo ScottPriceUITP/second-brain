@@ -4,7 +4,6 @@ Runs periodic jobs to surface relevant nudges, sync calendar, check for
 upcoming meetings, and retry failed operations.
 """
 
-import json
 import logging
 from datetime import timedelta
 
@@ -25,7 +24,7 @@ from second_brain.prompts.scheduler_reasoning import (
     SchedulerDecision,
 )
 from second_brain.services.anthropic_client import AnthropicClient
-from second_brain.utils.time import utc_now
+from second_brain.utils.time import to_local, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -425,14 +424,8 @@ class SchedulerService:
     def _format_calendar_events(events: list[CalendarEvent]) -> str:
         lines = []
         for ev in events:
-            start = ev.start_time.strftime("%Y-%m-%d %H:%M")
-            attendees = ""
-            if ev.attendees:
-                try:
-                    attendee_list = json.loads(ev.attendees)
-                    names = [a.get("name", a.get("email", "")) for a in attendee_list]
-                    attendees = f" (with: {', '.join(names)})"
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            start = to_local(ev.start_time).strftime("%Y-%m-%d %-I:%M %p")
+            names = ev.attendee_names()
+            attendees = f" (with: {', '.join(names)})" if names else ""
             lines.append(f"- [{start}] {ev.title}{attendees}")
         return "\n".join(lines)

@@ -120,7 +120,7 @@ class TestCreateNudge:
             message="Hey, follow up",
             escalation_level=1,
         )
-        assert "[REMINDER]" in formatted
+        assert "*Reminder*" in formatted
         assert "Hey, follow up" in formatted
 
     def test_returns_formatted_message_level_2(self, manager, sf):
@@ -130,7 +130,7 @@ class TestCreateNudge:
             message="Urgent item",
             escalation_level=2,
         )
-        assert "[ATTENTION]" in formatted
+        assert "*Attention*" in formatted
 
     def test_returns_formatted_message_level_3(self, manager, sf):
         _, formatted, _ = manager.create_nudge(
@@ -139,7 +139,7 @@ class TestCreateNudge:
             message="Action needed",
             escalation_level=3,
         )
-        assert "[ACTION NEEDED]" in formatted
+        assert "*Action Needed*" in formatted
 
     def test_returns_block_kit_blocks(self, manager, sf):
         nudge_id, _, blocks = manager.create_nudge(
