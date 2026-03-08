@@ -117,7 +117,7 @@ class EnrichmentResult(BaseModel):
     clean_text: str = Field(
         description="Cleaned/punctuated version of the raw text."
     )
-    entry_type: str | None = Field(
+    entry_type: str = Field(
         default="personal",
         description="Entry type: task, idea, meeting_note, project_context, or personal.",
     )
@@ -126,6 +126,7 @@ class EnrichmentResult(BaseModel):
     @classmethod
     def coerce_entry_type(cls, v):
         return v if v is not None else "personal"
+
     entities: list[ExtractedEntity] = Field(
         default_factory=list,
         description="Entities extracted from the text.",

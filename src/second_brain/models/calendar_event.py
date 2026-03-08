@@ -1,5 +1,6 @@
 """Calendar event model — cached Google Calendar events."""
 
+import json
 from datetime import datetime
 
 from sqlalchemy import DateTime, Text
@@ -24,3 +25,24 @@ class CalendarEvent(Base):
     synced_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: utc_now(), nullable=False
     )
+
+    def attendee_names(self) -> list[str]:
+        """Parse the JSON attendees field into a list of display names.
+
+        Falls back from name to email-derived name. Returns [] on any error.
+        """
+        if not self.attendees:
+            return []
+        try:
+            attendee_list = json.loads(self.attendees)
+            names = []
+            for a in attendee_list:
+                name = a.get("name", "").strip()
+                if not name:
+                    email = a.get("email", "")
+                    name = email.split("@")[0].replace(".", " ").title() if email else ""
+                if name:
+                    names.append(name)
+            return names
+        except (json.JSONDecodeError, TypeError):
+            return []

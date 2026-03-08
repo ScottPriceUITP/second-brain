@@ -4,7 +4,6 @@ Runs periodic jobs to surface relevant nudges, sync calendar, check for
 upcoming meetings, and retry failed operations.
 """
 
-import json
 import logging
 from datetime import timedelta
 
@@ -426,20 +425,7 @@ class SchedulerService:
         lines = []
         for ev in events:
             start = to_local(ev.start_time).strftime("%Y-%m-%d %-I:%M %p")
-            attendees = ""
-            if ev.attendees:
-                try:
-                    attendee_list = json.loads(ev.attendees)
-                    names = []
-                    for a in attendee_list:
-                        name = a.get("name", "").strip()
-                        if not name:
-                            email = a.get("email", "")
-                            name = email.split("@")[0].replace(".", " ").title() if email else ""
-                        if name:
-                            names.append(name)
-                    attendees = f" (with: {', '.join(names)})" if names else ""
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            names = ev.attendee_names()
+            attendees = f" (with: {', '.join(names)})" if names else ""
             lines.append(f"- [{start}] {ev.title}{attendees}")
         return "\n".join(lines)

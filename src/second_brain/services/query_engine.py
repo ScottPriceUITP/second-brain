@@ -1,6 +1,5 @@
 """Query engine — classifies queries and assembles context for LLM answering."""
 
-import json
 import logging
 from dataclasses import dataclass, field
 
@@ -266,21 +265,9 @@ class QueryEngine:
                 line = f"- [{start} - {end}] {ev.title}"
                 if ev.location:
                     line += f" (Location: {ev.location})"
-                if ev.attendees:
-                    try:
-                        att = json.loads(ev.attendees)
-                        names = []
-                        for a in att:
-                            name = a.get("name", "").strip()
-                            if not name:
-                                email = a.get("email", "")
-                                name = email.split("@")[0].replace(".", " ").title() if email else ""
-                            if name:
-                                names.append(name)
-                        if names:
-                            line += f" (Attendees: {', '.join(names)})"
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                names = ev.attendee_names()
+                if names:
+                    line += f" (Attendees: {', '.join(names)})"
                 parts.append(line)
             parts.append("")
 
