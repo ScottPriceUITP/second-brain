@@ -37,6 +37,12 @@ CONFIG_DEFAULTS: dict[str, str] = {
     "enrichment_retry_interval_minutes": "10",
     "escalation_check_interval_minutes": "15",
     "notify_on_token_refresh": "true",
+    "personality_enabled": "true",
+    "personality_daily_cap": "3",
+    "personality_chance_percent": "30",
+    "personality_quiet_day_cap": "1",
+    "daily_summary_enabled": "true",
+    "daily_summary_time": "16:30",
 }
 
 

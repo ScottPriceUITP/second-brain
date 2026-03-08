@@ -52,6 +52,10 @@ async def fetch_conversation_history(
         if exclude_latest_ts and msg.get("ts") == exclude_latest_ts:
             continue
 
+        # Skip personality messages so they don't pollute query context
+        if msg.get("metadata", {}).get("event_type") == "personality_message":
+            continue
+
         text = msg.get("text", "")
         if not text.strip():
             continue

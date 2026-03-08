@@ -92,6 +92,40 @@ def format_query_response(response: str, sources: list[dict]) -> str:
     return f"{response}{attribution}"
 
 
+def format_daily_summary_blocks(
+    summary_text: str, nudge_id: int, open_loop_count: int
+) -> list[dict]:
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": summary_text},
+        },
+        {"type": "divider"},
+    ]
+
+    action_elements = []
+    if open_loop_count > 0:
+        action_elements.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Review open loops"},
+                "action_id": "summary_review_loops",
+                "value": str(nudge_id),
+            },
+        )
+    action_elements.append(
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Looks good"},
+            "action_id": "summary_dismiss",
+            "value": str(nudge_id),
+        },
+    )
+
+    blocks.append({"type": "actions", "elements": action_elements})
+    return blocks
+
+
 def format_meeting_brief(
     meeting_title: str,
     start_time: str,
