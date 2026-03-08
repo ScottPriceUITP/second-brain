@@ -4,7 +4,7 @@ A single Haiku call classifies intent, cleans text, extracts entities,
 detects open loops, and optionally associates with a calendar event.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 ENRICHMENT_SYSTEM_PROMPT = """\
@@ -117,10 +117,15 @@ class EnrichmentResult(BaseModel):
     clean_text: str = Field(
         description="Cleaned/punctuated version of the raw text."
     )
-    entry_type: str = Field(
+    entry_type: str | None = Field(
         default="personal",
         description="Entry type: task, idea, meeting_note, project_context, or personal.",
     )
+
+    @field_validator("entry_type", mode="before")
+    @classmethod
+    def coerce_entry_type(cls, v):
+        return v if v is not None else "personal"
     entities: list[ExtractedEntity] = Field(
         default_factory=list,
         description="Entities extracted from the text.",

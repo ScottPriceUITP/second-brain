@@ -19,7 +19,7 @@ from second_brain.prompts.meeting_brief import (
 )
 from second_brain.services.anthropic_client import AnthropicClient
 from second_brain.utils.fts import fts_search
-from second_brain.utils.time import utc_now
+from second_brain.utils.time import to_local, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class MeetingBriefService:
         # Format entries for the prompt
         entries_text = self._format_entries(relevant_entries)
         attendees_str = ", ".join(attendees) if attendees else "(none listed)"
-        meeting_time = event.start_time.strftime("%Y-%m-%d %H:%M")
+        meeting_time = to_local(event.start_time).strftime("%Y-%m-%d %I:%M %p")
 
         def _esc(s: str) -> str:
             return s.replace("{", "{{").replace("}", "}}")
@@ -237,7 +237,7 @@ class MeetingBriefService:
 
         formatted = format_meeting_brief(
             meeting_title=event.title,
-            start_time=event.start_time.strftime("%H:%M"),
+            start_time=to_local(event.start_time).strftime("%-I:%M %p"),
             brief_text=brief_text,
             attendees=attendees or None,
         )

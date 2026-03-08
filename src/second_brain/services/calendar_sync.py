@@ -19,7 +19,7 @@ from second_brain.utils.time import utc_now
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar.events.readonly"]
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
@@ -127,8 +127,8 @@ class CalendarSyncService:
                 logger.warning("Invalid google_calendar_ids config, using primary")
 
         now = utc_now()
-        time_min = now.isoformat()
-        time_max = (now + timedelta(hours=24)).isoformat()
+        time_min = now.isoformat() + "Z"
+        time_max = (now + timedelta(hours=24)).isoformat() + "Z"
 
         total_synced = 0
 

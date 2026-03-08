@@ -88,7 +88,9 @@ async def handle_text_message(event, say, context):
 
     # Step 3: Route based on intent
     if enrichment_result.intent == "query":
-        await _handle_query(say, context, raw_text, entry_id, session_factory)
+        channel_id = event.get("channel", "")
+        message_ts = event.get("ts")
+        await _handle_query(say, context, raw_text, entry_id, session_factory, channel_id, message_ts)
         return
 
     # Step 4: Capture -- update entry with enrichment results
@@ -165,7 +167,7 @@ async def handle_text_message(event, say, context):
         )
 
 
-async def _handle_query(say, context, raw_text, entry_id, session_factory):
+async def _handle_query(say, context, raw_text, entry_id, session_factory, channel_id, message_ts=None):
     """Route a query-intent message to the query engine."""
     services = context.get("services", {})
     query_engine = services.get("query_engine")
@@ -185,17 +187,13 @@ async def _handle_query(say, context, raw_text, entry_id, session_factory):
         return
 
     try:
-        session_manager = services.get("query_session_manager")
-        session_ctx = None
-        if session_manager:
-            session_ctx = session_manager.session
+        from second_brain.bot.history import get_conversation_context
 
-        result = query_engine.handle_query(raw_text, session_context=session_ctx)
+        conversation_history = await get_conversation_context(
+            services, channel_id, session_factory, exclude_ts=message_ts,
+        )
 
-        # Update session
-        if session_manager:
-            source_ids = [s.entry_id for s in result.sources]
-            session_manager.update(raw_text, result.answer, source_ids)
+        result = query_engine.handle_query(raw_text, conversation_history=conversation_history)
 
         # Mark entry as a processed query
         from second_brain.models.entry import Entry

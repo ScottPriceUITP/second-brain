@@ -25,7 +25,7 @@ from second_brain.prompts.scheduler_reasoning import (
     SchedulerDecision,
 )
 from second_brain.services.anthropic_client import AnthropicClient
-from second_brain.utils.time import utc_now
+from second_brain.utils.time import to_local, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -425,13 +425,20 @@ class SchedulerService:
     def _format_calendar_events(events: list[CalendarEvent]) -> str:
         lines = []
         for ev in events:
-            start = ev.start_time.strftime("%Y-%m-%d %H:%M")
+            start = to_local(ev.start_time).strftime("%Y-%m-%d %-I:%M %p")
             attendees = ""
             if ev.attendees:
                 try:
                     attendee_list = json.loads(ev.attendees)
-                    names = [a.get("name", a.get("email", "")) for a in attendee_list]
-                    attendees = f" (with: {', '.join(names)})"
+                    names = []
+                    for a in attendee_list:
+                        name = a.get("name", "").strip()
+                        if not name:
+                            email = a.get("email", "")
+                            name = email.split("@")[0].replace(".", " ").title() if email else ""
+                        if name:
+                            names.append(name)
+                    attendees = f" (with: {', '.join(names)})" if names else ""
                 except (json.JSONDecodeError, TypeError):
                     pass
             lines.append(f"- [{start}] {ev.title}{attendees}")

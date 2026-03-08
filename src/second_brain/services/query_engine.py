@@ -1,14 +1,19 @@
 """Query engine — classifies queries and assembles context for LLM answering."""
 
+import json
 import logging
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
+from datetime import timedelta
+
 from second_brain.config import get_config_int
+from second_brain.models.calendar_event import CalendarEvent
 from second_brain.models.entity import entry_entities
 from second_brain.models.entry import Entry
+from second_brain.utils.time import to_local, utc_now
 from second_brain.prompts.query_simple import (
     QUERY_SIMPLE_SYSTEM,
     SimpleQueryResponse,
@@ -18,7 +23,6 @@ from second_brain.prompts.query_synthesis import (
     SynthesisQueryResponse,
 )
 from second_brain.services.anthropic_client import AnthropicClient
-from second_brain.services.query_session import QuerySession
 from second_brain.utils.fts import fts_search
 
 logger = logging.getLogger(__name__)
@@ -84,13 +88,14 @@ class QueryEngine:
     def handle_query(
         self,
         query_text: str,
-        session_context: QuerySession | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> QueryResponse:
         """Process a user query and return an answer with sources.
 
         Args:
             query_text: The user's question.
-            session_context: Optional previous query session for follow-ups.
+            conversation_history: Optional list of prior messages
+                [{"role": "user"|"assistant", "text": "..."}].
 
         Returns:
             QueryResponse with answer, sources, and model used.
@@ -104,22 +109,12 @@ class QueryEngine:
             max_entries = get_config_int(session, "query_max_entries") or 30
             context_entries = self._assemble_context(session, query_text, max_entries)
 
-            # Include session context entries if available
-            if session_context and session_context.source_entry_ids:
-                session_entry_ids = set(session_context.source_entry_ids)
-                existing_ids = {e.id for e in context_entries}
-                missing_ids = session_entry_ids - existing_ids
-                if missing_ids:
-                    extra = (
-                        session.query(Entry)
-                        .filter(Entry.id.in_(missing_ids))
-                        .all()
-                    )
-                    context_entries.extend(extra)
+            # 2b. Fetch upcoming calendar events
+            calendar_events = self._get_calendar_context(session)
 
             # 3. Build user prompt
             user_prompt = self._build_user_prompt(
-                query_text, context_entries, session_context
+                query_text, context_entries, conversation_history, calendar_events
             )
 
             # 4. Build source lookup for attribution (inside session to avoid detached access)
@@ -229,19 +224,64 @@ class QueryEngine:
         return ordered[:max_entries]
 
     @staticmethod
+    def _get_calendar_context(session: "Session") -> list[CalendarEvent]:
+        """Fetch calendar events from the recent past and upcoming 24 hours."""
+        now = utc_now()
+        past = now - timedelta(hours=4)
+        future = now + timedelta(hours=24)
+        return (
+            session.query(CalendarEvent)
+            .filter(
+                CalendarEvent.start_time >= past,
+                CalendarEvent.start_time <= future,
+            )
+            .order_by(CalendarEvent.start_time)
+            .all()
+        )
+
+    @staticmethod
     def _build_user_prompt(
         query_text: str,
         entries: list[Entry],
-        session_context: QuerySession | None,
+        conversation_history: list[dict] | None = None,
+        calendar_events: list[CalendarEvent] | None = None,
     ) -> str:
-        """Build the user prompt with context entries and optional session history."""
+        """Build the user prompt with context entries and optional conversation history."""
         parts: list[str] = []
 
-        # Include previous session context if available
-        if session_context:
-            parts.append("PREVIOUS QUERY CONTEXT:")
-            parts.append(f"Previous question: {session_context.query}")
-            parts.append(f"Previous answer: {session_context.response}")
+        # Include conversation history if available
+        if conversation_history:
+            parts.append("CONVERSATION HISTORY:")
+            for msg in conversation_history:
+                label = "You" if msg["role"] == "user" else "Assistant"
+                parts.append(f"{label}: {msg['text']}")
+            parts.append("")
+
+        # Add calendar events if available
+        if calendar_events:
+            parts.append("CALENDAR EVENTS:")
+            for ev in calendar_events:
+                start = to_local(ev.start_time).strftime("%Y-%m-%d %-I:%M %p")
+                end = to_local(ev.end_time).strftime("%-I:%M %p")
+                line = f"- [{start} - {end}] {ev.title}"
+                if ev.location:
+                    line += f" (Location: {ev.location})"
+                if ev.attendees:
+                    try:
+                        att = json.loads(ev.attendees)
+                        names = []
+                        for a in att:
+                            name = a.get("name", "").strip()
+                            if not name:
+                                email = a.get("email", "")
+                                name = email.split("@")[0].replace(".", " ").title() if email else ""
+                            if name:
+                                names.append(name)
+                        if names:
+                            line += f" (Attendees: {', '.join(names)})"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                parts.append(line)
             parts.append("")
 
         # Add knowledge base entries

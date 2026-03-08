@@ -44,7 +44,9 @@ def engine():
             "scheduler_interval_hours": "2",
             "scheduler_start_hour": "8",
             "scheduler_end_hour": "21",
-            "query_session_timeout_minutes": "10",
+            "conversation_history_messages": "10",
+            "conversation_history_max_chars": "1000",
+            "conversation_history_bot_truncate_chars": "200",
             "query_max_entries": "30",
             "nudge_escalation_days": "3",
             "enrichment_retry_count": "3",
@@ -113,6 +115,7 @@ def mock_client():
     client.chat_postMessage.return_value = {"ok": True, "ts": "1234567890.789012"}
     client.chat_update.return_value = {"ok": True}
     client.views_open.return_value = {"ok": True}
+    client.conversations_history.return_value = {"messages": []}
     return client
 
 

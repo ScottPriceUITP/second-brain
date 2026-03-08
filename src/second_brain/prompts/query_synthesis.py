@@ -23,6 +23,15 @@ RULES:
 - If the entries don't contain enough information for a full answer, say what \
 you can determine and note what's missing.
 
+FORMATTING:
+- Use Slack mrkdwn syntax, NOT standard Markdown.
+- Bold: *text* (single asterisks). NEVER use **text**.
+- Italic: _text_ (underscores).
+- Bulleted lists: use "• " (bullet character), not "- ".
+- Numbered lists: "1. " is fine.
+- Links: <url|label>.
+- Do NOT use headers (no # or ##).
+
 RESPOND WITH VALID JSON matching this exact schema:
 {
   "answer": "Your synthesized answer with analysis and source citations.",

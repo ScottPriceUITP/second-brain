@@ -17,6 +17,15 @@ you noted...").
 - If multiple entries contain relevant information, synthesize them into a \
 coherent answer while citing each source.
 
+FORMATTING:
+- Use Slack mrkdwn syntax, NOT standard Markdown.
+- Bold: *text* (single asterisks). NEVER use **text**.
+- Italic: _text_ (underscores).
+- Bulleted lists: use "• " (bullet character), not "- ".
+- Numbered lists: "1. " is fine.
+- Links: <url|label>.
+- Do NOT use headers (no # or ##).
+
 RESPOND WITH VALID JSON matching this exact schema:
 {
   "answer": "Your answer text here with source citations.",

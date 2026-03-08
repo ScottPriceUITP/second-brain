@@ -14,7 +14,6 @@ from second_brain.models.entity import Entity, entry_entities
 from second_brain.prompts.query_simple import SimpleQueryResponse
 from second_brain.prompts.query_synthesis import SynthesisQueryResponse
 from second_brain.services.query_engine import QueryEngine, QueryResponse
-from second_brain.services.query_session import QuerySession
 from second_brain.utils.time import utc_now
 
 
@@ -272,12 +271,12 @@ class TestQueryPipeline:
         assert entry_ids[0] in valid_ids
         assert 99999 not in valid_ids
 
-    def test_query_with_session_context(
+    def test_query_with_conversation_history(
         self,
         session_factory,
         mock_anthropic_client,
     ):
-        """Test follow-up query includes session context."""
+        """Test follow-up query includes conversation history."""
         entry_ids = _seed_entries(session_factory)
 
         captured_prompts = []
@@ -299,22 +298,21 @@ class TestQueryPipeline:
             session_factory=session_factory,
         )
 
-        # Simulate a follow-up query with prior context
-        prior_session = QuerySession(
-            query="Tell me about Reynolds Electric",
-            response="Reynolds Electric is a company in your knowledge base.",
-            source_entry_ids=[entry_ids[0]],
-        )
+        # Simulate a follow-up query with conversation history
+        history = [
+            {"role": "user", "text": "Tell me about Reynolds Electric"},
+            {"role": "assistant", "text": "Reynolds Electric is a company in your knowledge base."},
+        ]
 
         result = engine.handle_query(
             "Who attended the quarterly review?",
-            session_context=prior_session,
+            conversation_history=history,
         )
 
         assert isinstance(result, QueryResponse)
-        # The prompt sent to Haiku should contain prior context
+        # The prompt sent to Haiku should contain conversation history
         answer_prompt = captured_prompts[-1]
-        assert "PREVIOUS QUERY CONTEXT" in answer_prompt
+        assert "CONVERSATION HISTORY:" in answer_prompt
         assert "Reynolds Electric" in answer_prompt
 
     def test_query_one_hop_entity_expansion(

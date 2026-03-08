@@ -78,17 +78,6 @@ def build_services(session_factory) -> dict:
     except Exception:
         logger.exception("Service failed to load: enrichment")
 
-    # Query session manager
-    try:
-        from second_brain.services.query_session import QuerySessionManager
-
-        services["query_session_manager"] = QuerySessionManager()
-        logger.info("Service loaded: query_session_manager")
-    except ImportError:
-        logger.info("Service not available (skipped): query_session_manager")
-    except Exception:
-        logger.exception("Service failed to load: query_session_manager")
-
     # Query engine
     try:
         from second_brain.services.query_engine import QueryEngine
@@ -250,6 +239,16 @@ def main() -> None:
         scheduler = services.get("scheduler")
         if scheduler:
             scheduler.setup_scheduler(services)
+
+        # Run initial calendar sync to verify credentials on startup
+        calendar_sync = services.get("calendar_sync")
+        if calendar_sync:
+            try:
+                synced = await calendar_sync.sync()
+                logger.info("Initial calendar sync: %d events", synced)
+            except Exception:
+                logger.exception("Initial calendar sync failed")
+
         logger.info("Starting Slack Socket Mode...")
         await handler.start_async()
 
