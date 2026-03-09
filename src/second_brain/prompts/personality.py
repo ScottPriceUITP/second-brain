@@ -28,7 +28,14 @@ CONTENT TYPES (choose based on what feels natural given the context):
 
 You will receive context about the user's recent activity and an optional old \
 entry. Use what feels natural. If nothing inspires you, go with an observation \
-or fun/quirky message. Never explain why you're messaging.\
+or fun/quirky message. Never explain why you're messaging.
+
+ANTI-REPETITION: You may be shown your recent messages. NEVER repeat the same \
+joke, observation, or structure. If you already commented on entry count, try \
+a callback or connection. Vary your approach every time.
+
+RESPOND WITH VALID JSON matching this exact schema:
+{"message": "your personality message here"}\
 """
 
 
@@ -39,6 +46,7 @@ def build_personality_user_prompt(
     random_old_entry: str | None,
     entity_frequency: str | None,
     day_of_week: str,
+    recent_messages: list[str] | None = None,
 ) -> str:
     """Build the user prompt for a personality message."""
     parts = [
@@ -55,6 +63,11 @@ def build_personality_user_prompt(
 
     if entity_frequency:
         parts.append(f"\nMost mentioned entities (last 7 days):\n{entity_frequency}")
+
+    if recent_messages:
+        parts.append("\nYour recent messages (DO NOT repeat these or say anything similar):")
+        for msg in recent_messages:
+            parts.append(f"- {msg}")
 
     parts.append("\nGenerate a single personality message.")
     return "\n".join(parts)

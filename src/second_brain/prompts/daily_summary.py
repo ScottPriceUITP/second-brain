@@ -23,7 +23,10 @@ TONE:
 - Keep it concise but complete. Aim for 3-6 short paragraphs.
 
 If it was a quiet day (no entries), acknowledge that briefly and still mention \
-tomorrow's calendar if available. Don't be weird about quiet days.\
+tomorrow's calendar if available. Don't be weird about quiet days.
+
+RESPOND WITH VALID JSON matching this exact schema:
+{"summary": "your daily summary here"}\
 """
 
 

@@ -25,16 +25,14 @@ from second_brain.prompts.personality import (
     build_personality_user_prompt,
 )
 from second_brain.services.anthropic_client import AnthropicClient
-from second_brain.utils.time import to_local, utc_now
-
-TIMEZONE = ZoneInfo("America/New_York")
+from second_brain.utils.time import LOCAL_TZ, to_local, utc_now
 
 logger = logging.getLogger(__name__)
 
 
 def _local_day_start() -> datetime:
     """Return start of today in local time, as a UTC datetime for DB queries."""
-    local_now = datetime.now(TIMEZONE)
+    local_now = datetime.now(LOCAL_TZ)
     local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     return local_midnight.astimezone(ZoneInfo("UTC"))
 
@@ -93,6 +91,19 @@ class PersonalityService:
         seven_days_ago = now - timedelta(days=7)
 
         with self.session_factory() as session:
+            # Recent personality messages (to avoid repetition)
+            recent_personality = (
+                session.query(NudgeHistory.message_text)
+                .filter(
+                    NudgeHistory.nudge_type == "personality",
+                    NudgeHistory.sent_at >= today_start - timedelta(days=3),
+                )
+                .order_by(NudgeHistory.sent_at.desc())
+                .limit(10)
+                .all()
+            )
+            recent_messages = [row[0] for row in recent_personality]
+
             entries_today_count = (
                 session.query(func.count(Entry.id))
                 .filter(Entry.created_at >= today_start)
@@ -148,6 +159,7 @@ class PersonalityService:
             "random_old_entry": random_old_entry,
             "entity_frequency": entity_frequency,
             "day_of_week": local_now.strftime("%A"),
+            "recent_messages": recent_messages,
         }
 
     def generate_personality_message(self, context: dict) -> str:
@@ -160,9 +172,11 @@ class PersonalityService:
         )
         return result.message
 
-    async def send_personality_message(self, slack_client, channel_id: str) -> bool:
+    async def send_personality_message(
+        self, slack_client, channel_id: str, *, skip_gate: bool = False
+    ) -> bool:
         """Orchestrate: check → gather → generate → post → record."""
-        if not self.should_send_personality_message():
+        if not skip_gate and not self.should_send_personality_message():
             return False
 
         try:

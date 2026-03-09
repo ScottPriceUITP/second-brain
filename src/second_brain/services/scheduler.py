@@ -7,12 +7,8 @@ upcoming meetings, and retry failed operations.
 import logging
 from datetime import timedelta
 
-from zoneinfo import ZoneInfo
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import sessionmaker
-
-TIMEZONE = ZoneInfo("America/New_York")
 
 from second_brain.bot.formatting import format_nudge_blocks
 from second_brain.config import get_config, get_config_int
@@ -24,7 +20,7 @@ from second_brain.prompts.scheduler_reasoning import (
     SchedulerDecision,
 )
 from second_brain.services.anthropic_client import AnthropicClient
-from second_brain.utils.time import to_local, utc_now
+from second_brain.utils.time import LOCAL_TZ, to_local, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +39,7 @@ class SchedulerService:
         self.services = services
         self.session_factory: sessionmaker = services["db_session_factory"]
         self.anthropic_client: AnthropicClient | None = services.get("anthropic_client")
-        self.scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+        self.scheduler = AsyncIOScheduler(timezone=LOCAL_TZ)
         self._pending_escalations: list = []
 
     def setup_scheduler(self, bot_data: dict) -> None:
@@ -217,8 +213,9 @@ class SchedulerService:
             def _esc(s: str) -> str:
                 return s.replace("{", "{{").replace("}", "}}")
 
+            local_now = to_local(now)
             user_prompt = SCHEDULER_USER_PROMPT_TEMPLATE.format(
-                current_time=now.strftime("%Y-%m-%d %H:%M UTC"),
+                current_time=local_now.strftime("%Y-%m-%d %-I:%M %p %Z"),
                 open_loops=_esc(open_loops_text) or "(none)",
                 recent_entries=_esc(recent_text) or "(none)",
                 calendar_events=_esc(events_text) or "(none)",

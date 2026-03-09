@@ -94,7 +94,7 @@ class TestJobRegistration:
         svc.setup_scheduler(bot_data={})
 
         job_ids = [job.id for job in svc.scheduler.get_jobs()]
-        assert len(job_ids) == 6
+        assert len(job_ids) == 7
         svc.shutdown()
 
 

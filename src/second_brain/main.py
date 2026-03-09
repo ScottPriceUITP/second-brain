@@ -245,7 +245,7 @@ def main() -> None:
 
     # Inject Slack-specific references into services
     services["slack_client"] = app.client
-    services["channel_id"] = os.environ.get("SLACK_CHANNEL_ID", "")
+    services["slack_user_id"] = os.environ.get("SLACK_USER_ID", "")
 
     # Start Socket Mode
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -266,8 +266,36 @@ def main() -> None:
             except Exception:
                 logger.exception("Initial calendar sync failed")
 
+        # Open DM channel with the user and store for proactive messages
+        slack_user_id = services.get("slack_user_id")
+        if slack_user_id:
+            try:
+                dm = await app.client.conversations_open(users=[slack_user_id])
+                services["channel_id"] = dm["channel"]["id"]
+                logger.info("DM channel opened: %s", services["channel_id"])
+            except Exception:
+                logger.exception("Failed to open DM channel for user %s", slack_user_id)
+                services["channel_id"] = ""
+        else:
+            services["channel_id"] = ""
+
         logger.info("Starting Slack Socket Mode...")
-        await handler.start_async()
+        await handler.connect_async()
+
+        # Send a personality message on startup as a health check
+        personality = services.get("personality")
+        channel_id = services.get("channel_id")
+        if personality and channel_id:
+            try:
+                await personality.send_personality_message(
+                    app.client, channel_id, skip_gate=True
+                )
+                logger.info("Startup personality message sent")
+            except Exception:
+                logger.exception("Startup personality message failed")
+
+        # Keep the process running
+        await asyncio.Event().wait()
 
     asyncio.run(_start())
 

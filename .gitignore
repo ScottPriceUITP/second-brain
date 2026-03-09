@@ -28,8 +28,12 @@ build/
 Thumbs.db
 
 # Data directory contents (keep directory)
-data/*.db
+data/*
 
 # Logs
 logs/
 *.log
+
+# docs
+/requirements
+/plans
